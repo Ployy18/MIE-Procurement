@@ -83,6 +83,10 @@
       "optional": true
     }
   },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=10.0.0"
+  },
   "pnpm": {
     "overrides": {
       "vite": "6.3.5"
