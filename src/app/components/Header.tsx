@@ -166,8 +166,15 @@ export function Header({
     setImporting(true);
     try {
       const data = await readExcelFile(file);
-      await uploadToGoogleSheets(data);
-      alert("นำเข้าข้อมูลสำเร็จแล้ว!");
+      console.log("Data read from file:", data);
+
+      const result = await uploadToGoogleSheets(data);
+      console.log("Upload result:", result);
+
+      alert(
+        "นำเข้าข้อมูลสำเร็จแล้ว!\n\nDebug info:\n" +
+          JSON.stringify(result, null, 2),
+      );
 
       // Refresh data
       window.location.reload();
@@ -200,39 +207,91 @@ export function Header({
   };
 
   const uploadToGoogleSheets = async (data: any[]) => {
-    // ใช้ Google Sheets URL โดยตรงที่ระบุ
-    const googleSheetsUrl =
-      "https://docs.google.com/spreadsheets/d/e/2PACX-1vQpap4q0Sdy5O1x5WNDuI3ZurwY3LNSbtDilGliHHfDgePvHDFHBsSQ30_InxxY2Pysz_LOXHVhl_cp/pub?output=csv";
+    // ใช้ Apps Script API แทนการส่งไปยัง Google Sheets โดยตรง
+    const apiUrl = import.meta.env.VITE_APPS_SCRIPT_URL;
 
-    console.log("Uploading data to Google Sheets:", data);
+    console.log("=== DEBUG INFO ===");
+    console.log("Raw import.meta.env:", import.meta.env);
+    console.log("VITE_APPS_SCRIPT_URL:", import.meta.env.VITE_APPS_SCRIPT_URL);
+    console.log("All env keys:", Object.keys(import.meta.env));
+    console.log("Final API URL:", apiUrl);
+    console.log("Uploading data to Apps Script:", data);
+
+    // ตรวจสอบว่า URL ถูกต้องหรือไม่
+    if (!apiUrl || apiUrl.includes("YOUR_SCRIPT_ID") || apiUrl.length < 10) {
+      console.error("API URL validation failed:", {
+        hasValue: !!apiUrl,
+        isPlaceholder: apiUrl?.includes("YOUR_SCRIPT_ID"),
+        isTooShort: apiUrl?.length < 10,
+        actualValue: apiUrl,
+      });
+      throw new Error("API URL ยังไม่ถูกตั้งค่า กรุณาตรวจสอบ .env file");
+    }
 
     try {
-      // แปลง JSON เป็น CSV format
-      const csvContent = convertToCSV(data);
+      // Test 1: Simple GET request first
+      console.log("Testing GET request...");
+      const getResponse = await fetch(apiUrl + "?action=test", {
+        method: "GET",
+      });
 
-      // สร้าง Blob สำหรับ CSV
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      if (!getResponse.ok) {
+        throw new Error(
+          `GET test failed: ${getResponse.status} ${getResponse.statusText}`,
+        );
+      }
 
-      // สร้าง FormData สำหรับการส่ง
-      const formData = new FormData();
-      formData.append("data", blob, "import.csv");
+      const getResult = await getResponse.json();
+      console.log("GET test result:", getResult);
 
-      // ส่งไปยัง Google Sheets ผ่าน URL โดยตรง
-      const response = await fetch(googleSheetsUrl, {
+      // Test 2: POST request with simple data
+      console.log("Testing POST request...");
+      const response = await fetch(apiUrl, {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "text/plain",
+        },
+        body: JSON.stringify({
+          action: "importAndProcess",
+          data: data,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
+        throw new Error(
+          `POST failed: ${response.status} ${response.statusText}`,
+        );
       }
 
-      const result = await response.text();
-      console.log("Upload result:", result);
+      const result = await response.json();
+      console.log("POST test result:", result);
 
-      return { success: true, message: result };
+      return { success: true, message: result.message };
     } catch (error) {
-      console.error("Upload error:", error);
+      console.error("API test error:", error);
+
+      // แสดง error ที่ละเอียดขึ้น
+      if (error instanceof Error) {
+        if (error.message.includes("Failed to fetch")) {
+          throw new Error(
+            "Network error: กรุณาตรวจสอบ Apps Script URL และการตั้งค่า CORS",
+          );
+        } else if (
+          error.message.includes("403") ||
+          error.message.includes("Forbidden")
+        ) {
+          throw new Error(
+            'Permission error: กรุณาตรวจสอบการ Deploy Apps Script (ต้องเป็น "Anyone" access)',
+          );
+        } else if (error.message.includes("CORS")) {
+          throw new Error(
+            "CORS error: กรุณาตรวจสอบการตั้งค่า CORS ใน Apps Script",
+          );
+        } else {
+          throw error;
+        }
+      }
+
       throw error;
     }
   };
