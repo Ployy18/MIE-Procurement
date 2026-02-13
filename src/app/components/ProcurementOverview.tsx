@@ -516,7 +516,7 @@ export function ProcurementOverview({
           delay={0.6}
         >
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={categoryData}>
+            <BarChart data={categoryData} layout="vertical">
               <CartesianGrid
                 strokeDasharray="3 3"
                 stroke="#e5e7eb"
@@ -548,11 +548,11 @@ export function ProcurementOverview({
                 }}
                 itemStyle={{ color: "#111827" }}
                 formatter={(value: number) => [
-                  `฿${value.toLocaleString()}`,
+                  `${value.toLocaleString()}`,
                   "Total Amount",
                 ]}
               />
-              <Bar dataKey="total" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="total" radius={[10, 10, 0, 0]}>
                 {categoryData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
