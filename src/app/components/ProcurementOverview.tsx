@@ -437,7 +437,7 @@ export function ProcurementOverview({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <ChartContainer
           title="Expense Trend Analysis"
-          subtitle="Monthly Total Amount"
+          subtitle="Monthly Spending Overview"
           className="lg:col-span-2"
           delay={0.5}
         >
@@ -516,21 +516,13 @@ export function ProcurementOverview({
           delay={0.6}
         >
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={categoryData} layout="vertical">
+            <BarChart data={categoryData}>
               <CartesianGrid
                 strokeDasharray="3 3"
                 stroke="#e5e7eb"
                 vertical={false}
               />
               <XAxis
-                type="number"
-                stroke="#6b7280"
-                fontSize={12}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(value) => `${(value / 1000).toLocaleString()}k`}
-              />
-              <YAxis
                 dataKey="category"
                 type="category"
                 stroke="#6b7280"
@@ -538,6 +530,14 @@ export function ProcurementOverview({
                 tickLine={false}
                 axisLine={false}
                 width={80}
+              />
+              <YAxis
+                type="number"
+                stroke="#6b7280"
+                fontSize={12}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(value) => `${(value / 1000).toLocaleString()}k`}
               />
               <Tooltip
                 cursor={{ fill: "#e5e7eb", opacity: 0.4 }}
@@ -552,7 +552,7 @@ export function ProcurementOverview({
                   "Total Amount",
                 ]}
               />
-              <Bar dataKey="total" radius={[0, 4, 4, 0]}>
+              <Bar dataKey="total" radius={[4, 4, 0, 0]}>
                 {categoryData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
