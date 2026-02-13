@@ -883,10 +883,10 @@ export function ProcurementOverview({
             <div className="px-6 py-4 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">
-                  Po details -{" "}
+                  PO Details -{" "}
                   {selectedSupplierPOs[0]?.poNumber
-                    ? `Po ${selectedSupplierPOs[0]?.poNumber}`
-                    : "Supplier pos"}
+                    ? `PO ${selectedSupplierPOs[0]?.poNumber}`
+                    : "Supplier POs"}
                 </h3>
                 <button
                   onClick={closeModal}
@@ -924,7 +924,7 @@ export function ProcurementOverview({
                       <div className="flex items-center justify-between mb-3">
                         <div>
                           <h4 className="font-semibold text-gray-900">
-                            Po #{po.poNumber}
+                            PO #{po.poNumber}
                           </h4>
                           <p className="text-sm text-gray-500">
                             {po.date
@@ -941,20 +941,20 @@ export function ProcurementOverview({
 
                       <div className="space-y-2">
                         <h5 className="text-sm font-medium text-gray-700 mb-2">
-                          Line items:
+                          Line Items:
                         </h5>
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead className="bg-gray-50">
                               <tr>
-                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Category
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 lowercase tracking-wider">
+                                  category
                                 </th>
-                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Description
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 lowercase tracking-wider">
+                                  description
                                 </th>
-                                <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Amount
+                                <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 lowercase tracking-wider">
+                                  amount
                                 </th>
                               </tr>
                             </thead>
