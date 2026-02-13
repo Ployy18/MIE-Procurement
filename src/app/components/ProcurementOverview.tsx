@@ -54,8 +54,11 @@ export function ProcurementOverview({
   const [monthlyExpenseData, setMonthlyExpenseData] = useState<any[]>([]);
   const [supplierData, setSupplierData] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const itemsPerPage = 10;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  const [selectedSupplierPOs, setSelectedSupplierPOs] = useState<any[]>([]);
+  const [showPOModal, setShowPOModal] = useState(false);
+  const [loadingPOs, setLoadingPOs] = useState(false);
   const [previousYearData, setPreviousYearData] = useState<any[]>([]);
   const [categoryData, setCategoryData] = useState<any[]>([]);
 
@@ -392,6 +395,104 @@ export function ProcurementOverview({
     fetchPOData();
   }, [filters]);
 
+  // Function to fetch PO details for a specific supplier
+  const fetchSupplierPOs = async (supplierName: string) => {
+    setLoadingPOs(true);
+    try {
+      // Fetch data from both tabs
+      const [tab1Data, tab2Data] = await Promise.all([
+        getTab1Data(),
+        getTab2Data(),
+      ]);
+
+      // Apply filters
+      let filteredTab1Data = tab1Data.rows;
+      let filteredTab2Data = tab2Data.rows;
+
+      // Filter by year
+      if (filters.year !== "all") {
+        filteredTab1Data = filteredTab1Data.filter((row) => {
+          const dateStr = row["DATE"];
+          if (dateStr) {
+            const year = new Date(dateStr).getFullYear().toString();
+            return year === filters.year;
+          }
+          return false;
+        });
+
+        filteredTab2Data = filteredTab2Data.filter((row) => {
+          const dateStr = row["DATE"];
+          if (dateStr) {
+            const year = new Date(dateStr).getFullYear().toString();
+            return year === filters.year;
+          }
+          return false;
+        });
+      }
+
+      // Filter by project
+      if (filters.project !== "all") {
+        filteredTab1Data = filteredTab1Data.filter(
+          (row) => row["Project Code"] === filters.project,
+        );
+
+        filteredTab2Data = filteredTab2Data.filter(
+          (row) => row["Project Code"] === filters.project,
+        );
+      }
+
+      // Get POs for the specific supplier
+      const supplierPOs = filteredTab1Data
+        .filter((row) => String(row["Supplier Name"]) === supplierName)
+        .map((po) => {
+          const poNumber = po["PO.NO."];
+
+          // Get line items for this PO
+          const lineItems = filteredTab2Data.filter(
+            (row) => row["PO.NO."] === poNumber,
+          );
+
+          return {
+            poNumber: poNumber,
+            date: po["DATE"],
+            totalAmount: parseFloat(
+              String(po["Total Amount"]?.toString().replace(/,/g, "") || "0"),
+            ),
+            lineItems: lineItems.map((item) => ({
+              category: item["Category"] || "Unknown",
+              amount: parseFloat(
+                String(
+                  item["Total Amount"]?.toString().replace(/,/g, "") || "0",
+                ),
+              ),
+              description: item["Description"] || "",
+            })),
+          };
+        })
+        .sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        );
+
+      setSelectedSupplierPOs(supplierPOs);
+      setShowPOModal(true);
+    } catch (error) {
+      console.error("Error fetching supplier POs:", error);
+    } finally {
+      setLoadingPOs(false);
+    }
+  };
+
+  // Function to handle PO count click
+  const handlePOCountClick = (supplierName: string) => {
+    fetchSupplierPOs(supplierName);
+  };
+
+  // Function to close modal
+  const closeModal = () => {
+    setShowPOModal(false);
+    setSelectedSupplierPOs([]);
+  };
+
   return (
     <div className="space-y-6">
       {/* KPI Section */}
@@ -629,9 +730,12 @@ export function ProcurementOverview({
                       ฿{supplier.totalAmount.toLocaleString()}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
+                      <button
+                        onClick={() => handlePOCountClick(supplier.name)}
+                        className="px-2 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium hover:bg-blue-100 transition-colors cursor-pointer"
+                      >
                         {supplier.poCount} POs
-                      </span>
+                      </button>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
@@ -771,6 +875,127 @@ export function ProcurementOverview({
           )}
         </div>
       </ChartContainer>
+
+      {/* PO Details Modal */}
+      {showPOModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  PO Details -{" "}
+                  {selectedSupplierPOs[0]?.poNumber
+                    ? `PO ${selectedSupplierPOs[0]?.poNumber}`
+                    : "Supplier POs"}
+                </h3>
+                <button
+                  onClick={closeModal}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 overflow-y-auto max-h-[60vh]">
+              {loadingPOs ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="text-gray-500">Loading PO details...</div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {selectedSupplierPOs.map((po, poIndex) => (
+                    <div
+                      key={poIndex}
+                      className="border border-gray-200 rounded-lg p-4"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h4 className="font-semibold text-gray-900">
+                            PO #{po.poNumber}
+                          </h4>
+                          <p className="text-sm text-gray-500">
+                            {po.date
+                              ? new Date(po.date).toLocaleDateString()
+                              : "No date"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-gray-900">
+                            ฿{po.totalAmount.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-medium text-gray-700 mb-2">
+                          Line Items:
+                        </h5>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                  Category
+                                </th>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                  Description
+                                </th>
+                                <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                  Amount
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                              {po.lineItems.map(
+                                (item: any, itemIndex: number) => (
+                                  <tr key={itemIndex}>
+                                    <td className="px-3 py-2 whitespace-nowrap">
+                                      <span
+                                        className={`px-2 py-1 text-xs rounded-full ${
+                                          item.category === "Service"
+                                            ? "bg-blue-100 text-blue-800"
+                                            : item.category === "Material"
+                                              ? "bg-green-100 text-green-800"
+                                              : "bg-gray-100 text-gray-800"
+                                        }`}
+                                      >
+                                        {item.category}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-gray-900">
+                                      {item.description || "-"}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-medium text-gray-900">
+                                      ฿{item.amount.toLocaleString()}
+                                    </td>
+                                  </tr>
+                                ),
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
