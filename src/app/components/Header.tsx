@@ -200,31 +200,64 @@ export function Header({
   };
 
   const uploadToGoogleSheets = async (data: any[]) => {
-    const apiUrl =
-      (import.meta as any).env?.VITE_IMPORT_API_URL ||
-      "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec";
+    // ใช้ Google Sheets URL โดยตรงที่ระบุ
+    const googleSheetsUrl =
+      "https://docs.google.com/spreadsheets/d/e/2PACX-1vQpap4q0Sdy5O1x5WNDuI3ZurwY3LNSbtDilGliHHfDgePvHDFHBsSQ30_InxxY2Pysz_LOXHVhl_cp/pub?output=csv";
 
-    console.log("Uploading data:", data);
+    console.log("Uploading data to Google Sheets:", data);
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        action: "importData",
-        data: data,
-      }),
+    try {
+      // แปลง JSON เป็น CSV format
+      const csvContent = convertToCSV(data);
+
+      // สร้าง Blob สำหรับ CSV
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+
+      // สร้าง FormData สำหรับการส่ง
+      const formData = new FormData();
+      formData.append("data", blob, "import.csv");
+
+      // ส่งไปยัง Google Sheets ผ่าน URL โดยตรง
+      const response = await fetch(googleSheetsUrl, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
+
+      const result = await response.text();
+      console.log("Upload result:", result);
+
+      return { success: true, message: result };
+    } catch (error) {
+      console.error("Upload error:", error);
+      throw error;
+    }
+  };
+
+  const convertToCSV = (data: any[]): string => {
+    if (!data || data.length === 0) return "";
+
+    // ดึง headers จากแถวแรก
+    const headers = Object.keys(data[0]);
+
+    // แปลงข้อมูลเป็น CSV
+    const csvRows = data.map((row) => {
+      return headers
+        .map((header) => {
+          const value = row[header] || "";
+          // จัดการกับค่าที่มี comma หรือ newline
+          const escapedValue = String(value).replace(/"/g, '""');
+          return `"${escapedValue}"`;
+        })
+        .join(",");
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Upload failed: ${errorText}`);
-    }
-
-    const result = await response.json();
-    console.log("Upload result:", result);
-    return result;
+    // รวม headers และ rows
+    const csvContent = [headers.join(","), ...csvRows].join("\n");
+    return csvContent;
   };
 
   return (
