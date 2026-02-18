@@ -5,6 +5,7 @@ import {
   TrendingUp,
   Database,
   Package,
+  Upload,
 } from "lucide-react";
 import { cn } from "./KPICard";
 
@@ -21,6 +22,7 @@ export function Sidebar({ currentView, onChangeView }: SidebarProps) {
   ];
 
   const bottomMenuItems = [
+    { id: "data-upload", label: "Upload Data", icon: Upload },
     { id: "data-source", label: "Data Source", icon: Database },
   ];
 

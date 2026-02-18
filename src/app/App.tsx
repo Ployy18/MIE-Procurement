@@ -5,6 +5,7 @@ import { ProcurementOverview } from "./components/ProcurementOverview";
 import { CostInsights } from "./components/CostInsights";
 import { ForecastPlanning } from "./components/ForecastPlanning";
 import { DataSource } from "./components/DataSource";
+import { DataUpload } from "./components/DataUpload";
 import { motion, AnimatePresence } from "motion/react";
 
 export default function App() {
@@ -19,6 +20,8 @@ export default function App() {
         return "Supplier & Cost Intelligence";
       case "forecast":
         return "Forecast & Planning";
+      case "data-upload":
+        return "Data Import & Cleaning";
       default:
         return "Data Source";
     }
@@ -57,6 +60,7 @@ export default function App() {
               {currentView === "insight" && <CostInsights />}
               {currentView === "forecast" && <ForecastPlanning />}
               {currentView === "data-source" && <DataSource />}
+              {currentView === "data-upload" && <DataUpload />}
             </motion.div>
           </AnimatePresence>
         </main>
