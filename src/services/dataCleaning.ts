@@ -45,20 +45,23 @@ export const DataCleaningService = {
     console.log("🧹 [DataCleaningService] Starting data cleaning pipeline...");
     console.log("📊 [DataCleaningService] Input data:", {
       totalRows: rawData.length,
-      sampleRow: rawData[0]
+      sampleRow: rawData[0],
     });
 
     const validRows = rawData.filter((row) => this.isValidRow(row));
     console.log("✅ [DataCleaningService] Valid rows after filtering:", {
       validRows: validRows.length,
-      filteredRows: rawData.length - validRows.length
+      filteredRows: rawData.length - validRows.length,
     });
 
     const processedRows = validRows.map((row) => this.processRow(row));
-    console.log("🔄 [DataCleaningService] Processing completed. Final result:", {
-      processedRows: processedRows.length,
-      sampleProcessedRow: processedRows[0]
-    });
+    console.log(
+      "🔄 [DataCleaningService] Processing completed. Final result:",
+      {
+        processedRows: processedRows.length,
+        sampleProcessedRow: processedRows[0],
+      },
+    );
 
     return processedRows;
   },
@@ -67,8 +70,11 @@ export const DataCleaningService = {
    * Parse Excel file buffer
    */
   async parseExcel(file: File): Promise<RawDataRow[]> {
-    console.log("📊 [DataCleaningService] Starting Excel parsing for:", file.name);
-    
+    console.log(
+      "📊 [DataCleaningService] Starting Excel parsing for:",
+      file.name,
+    );
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -78,14 +84,14 @@ export const DataCleaningService = {
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
           const jsonData = XLSX.utils.sheet_to_json(worksheet) as RawDataRow[];
-          
+
           console.log("✅ [DataCleaningService] Excel parsing completed:", {
             sheets: workbook.SheetNames,
             selectedSheet: firstSheetName,
             rowsParsed: jsonData.length,
-            sampleRow: jsonData[0]
+            sampleRow: jsonData[0],
           });
-          
+
           resolve(jsonData);
         } catch (err) {
           console.error("❌ [DataCleaningService] Excel parsing error:", err);
@@ -150,9 +156,12 @@ export const DataCleaningService = {
    * Check if a row is valid (must have a PO number and not be cancelled)
    */
   isValidRow(row: RawDataRow): boolean {
-    console.log("🔍 [DataCleaningService] Checking row validity. Available columns:", Object.keys(row));
+    console.log(
+      "🔍 [DataCleaningService] Checking row validity. Available columns:",
+      Object.keys(row),
+    );
     console.log("📊 [DataCleaningService] Row data sample:", row);
-    
+
     const poValue = this.findValue(row, [
       "PO",
       "PO_Number",
@@ -161,9 +170,9 @@ export const DataCleaningService = {
       "PO NO",
       "__EMPTY_1", // For Excel files with merged headers
     ]);
-    
+
     console.log("🎯 [DataCleaningService] PO value found:", poValue);
-    
+
     if (!poValue || poValue.toString().trim() === "") {
       console.log("❌ [DataCleaningService] Invalid row: No PO number found");
       return false;
@@ -195,7 +204,13 @@ export const DataCleaningService = {
    */
   processRow(row: RawDataRow): CleanedDataRow {
     // 1. Extract Date
-    const rawDate = this.findValue(row, ["DATE", "Date", "วันที่", "PO Date", "__EMPTY_2"]); // __EMPTY_2 for Excel merged headers
+    const rawDate = this.findValue(row, [
+      "DATE",
+      "Date",
+      "วันที่",
+      "PO Date",
+      "__EMPTY_2",
+    ]); // __EMPTY_2 for Excel merged headers
     const cleanedDate = this.parseDate(rawDate);
 
     // 2. Extract PO Number
@@ -250,7 +265,12 @@ export const DataCleaningService = {
     );
 
     // 5. Extract Quantity and Price
-    const rawQty = this.findValue(row, ["Qty", "Quantity", "จำนวน", "__EMPTY_5"]);
+    const rawQty = this.findValue(row, [
+      "Qty",
+      "Quantity",
+      "จำนวน",
+      "__EMPTY_5",
+    ]);
     const rawPrice = this.findValue(row, [
       "Price",
       "Amount",
