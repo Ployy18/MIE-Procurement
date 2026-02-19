@@ -114,23 +114,38 @@ export function DataSource() {
 
   // Initialize available sheets and check for new sheets periodically
   useEffect(() => {
-    const sheets = getSheetNames();
-    setAvailableSheets(sheets);
-
-    // Set up interval to check for new sheets every 30 seconds
-    const interval = setInterval(() => {
-      const updatedSheets = getSheetNames();
-      if (updatedSheets.length > sheets.length) {
-        // New sheets detected
-        const newSheets = updatedSheets.filter(
-          (sheet) => !sheets.includes(sheet),
-        );
-        newSheets.forEach((sheet) => {
-          console.log(`New sheet detected: ${sheet}`);
-        });
-        setAvailableSheets(updatedSheets);
+    const fetchNames = async () => {
+      try {
+        const sheets = await getSheetNames();
+        setAvailableSheets(sheets);
+        // Set default tab if none selected or if default doesn't exist in new list
+        if (
+          sheets.length > 0 &&
+          (!selectedTab || !sheets.includes(selectedTab))
+        ) {
+          setSelectedTab(sheets[0]);
+        }
+      } catch (error) {
+        console.error("Failed to initialize sheet names:", error);
       }
-    }, 30000); // Check every 30 seconds
+    };
+
+    fetchNames();
+
+    // Set up interval to check for new sheets every 60 seconds
+    const interval = setInterval(async () => {
+      try {
+        const updatedSheets = await getSheetNames();
+        setAvailableSheets((prev) => {
+          if (updatedSheets.length !== prev.length) {
+            return updatedSheets;
+          }
+          return prev;
+        });
+      } catch (e) {
+        console.error("Failed to refresh sheet names in background:", e);
+      }
+    }, 60000);
 
     return () => clearInterval(interval);
   }, []);
@@ -236,22 +251,20 @@ export function DataSource() {
     setIsSyncing(false);
   };
 
-  const handleAddNewSheet = () => {
-    const sheetName = prompt("กรุณาใส่ชื่อชีทใหม่:");
+  const handleAddNewSheet = async () => {
+    const sheetName = prompt(
+      "กรุณาใส่ชื่อชีทใหม่ (สำหรับเรียกดูข้อมูลที่อัปโหลดไว้แล้ว):",
+    );
     if (sheetName && sheetName.trim()) {
       const cleanSheetName = sheetName.trim();
-      addNewSheet(cleanSheetName);
 
-      // Add URL for the new sheet (using default URL pattern)
-      const newSheetURL = `https://docs.google.com/spreadsheets/d/e/2PACX-1vQpap4q0Sdy5O1x5WNDuI3ZurwY3LNSbtDilGliHHfDgePvHDFHBsSQ30_InxxY2Pysz_LOXHVhl_cp/pub?gid=${Date.now()}&single=true&output=csv`;
-      addSheetURL(cleanSheetName, newSheetURL);
-
-      const updatedSheets = getSheetNames();
-      setAvailableSheets(updatedSheets);
+      // Note: With Node.js backend, you usually upload data to create/populate sheets.
+      // This button now just helps you switch to a sheet you know exists.
+      const updatedSheets = await getSheetNames();
+      if (!updatedSheets.includes(cleanSheetName)) {
+        setAvailableSheets([...updatedSheets, cleanSheetName]);
+      }
       setSelectedTab(cleanSheetName);
-      console.log(
-        `Added new sheet: ${cleanSheetName} with URL: ${newSheetURL}`,
-      );
     }
   };
 

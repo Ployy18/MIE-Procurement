@@ -11,4 +11,7 @@ export default defineConfig({
     },
   },
   assetsInclude: ["**/*.svg", "**/*.csv"],
+  define: {
+    'import.meta.env': 'import.meta.env',
+  },
 });

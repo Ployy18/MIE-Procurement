@@ -41,7 +41,7 @@ const validateTrendData = (data: any[]) => {
 const transformSheetData = (sheetData: any[]) => {
   // Group by month-year and sum amounts
   const monthlyData = sheetData.reduce((acc: Record<string, number>, row) => {
-    const dateStr = row["DATE"];
+    const dateStr = row.date;
     if (!dateStr) return acc;
 
     const date = new Date(dateStr);
@@ -49,15 +49,10 @@ const transformSheetData = (sheetData: any[]) => {
     const month = date.toLocaleString("en-US", { month: "short" });
     const monthYearKey = `${year}-${month}`;
 
-    // Handle comma removal and parse Total Amount correctly
-    const amountStr = String(row["Total Amount"] || "0").replace(/,/g, "");
-    const amount = parseFloat(amountStr) || 0;
+    const amount = parseFloat(row.totalPrice) || 0;
 
     // Sum amounts for the same month
-    if (!acc[monthYearKey]) {
-      acc[monthYearKey] = 0;
-    }
-    acc[monthYearKey] += amount;
+    acc[monthYearKey] = (acc[monthYearKey] || 0) + amount;
 
     return acc;
   }, {});
@@ -73,7 +68,7 @@ const transformSheetData = (sheetData: any[]) => {
         forecast: null,
       };
     })
-    .sort((a, b) => {
+    .sort((a: any, b: any) => {
       // Sort by date
       const dateA = new Date(`${a.month} 1, ${a.year}`);
       const dateB = new Date(`${b.month} 1, ${b.year}`);

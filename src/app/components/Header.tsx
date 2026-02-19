@@ -34,6 +34,19 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
   const [importing, setImporting] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    const fetchSheetNames = async () => {
+      try {
+        const names = await getSheetNames();
+        setSheetNames(names);
+      } catch (error) {
+        console.error("Error fetching sheet names:", error);
+      }
+    };
+    fetchSheetNames();
+  }, []);
 
   useEffect(() => {
     const fetchProjects = async () => {
@@ -41,7 +54,7 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
         const tab1Data = await getTab1Data();
         const uniqueProjects = new Set(
           tab1Data.rows
-            .map((row) => String(row["Project Code"]))
+            .map((row) => String(row.projectCode || row["Project Code"] || ""))
             .filter((project) => project && project.trim() !== ""),
         );
         const projectList = Array.from(uniqueProjects) as string[];
@@ -52,7 +65,7 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
         const uniqueYears = new Set(
           tab1Data.rows
             .map((row) => {
-              const dateStr = row["DATE"];
+              const dateStr = row.date || row["DATE"];
               if (dateStr) {
                 return new Date(dateStr).getFullYear().toString();
               }
@@ -82,7 +95,7 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
         // Filter by year if selected
         if (selectedYear !== "all") {
           filteredRows = filteredRows.filter((row) => {
-            const dateStr = row["DATE"];
+            const dateStr = row.date || row["DATE"];
             if (dateStr) {
               const year = new Date(dateStr).getFullYear().toString();
               return year === selectedYear;
@@ -94,7 +107,7 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
         // Get unique projects from filtered data
         const uniqueProjects = new Set(
           filteredRows
-            .map((row) => String(row["Project Code"]))
+            .map((row) => String(row.projectCode || row["Project Code"] || ""))
             .filter((project) => project && project.trim() !== ""),
         );
         const projectList = Array.from(uniqueProjects) as string[];
@@ -126,7 +139,9 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
         // Filter by project if selected
         if (selectedProject !== "all") {
           filteredRows = filteredRows.filter(
-            (row) => String(row["Project Code"]) === selectedProject,
+            (row) =>
+              String(row.projectCode || row["Project Code"] || "") ===
+              selectedProject,
           );
         }
 
@@ -134,7 +149,7 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
         const uniqueYears = new Set(
           filteredRows
             .map((row) => {
-              const dateStr = row["DATE"];
+              const dateStr = row.date || row["DATE"];
               if (dateStr) {
                 return new Date(dateStr).getFullYear().toString();
               }
@@ -597,7 +612,7 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   >
                     <option value="">-- เลือก Sheet --</option>
-                    {getSheetNames().map((sheet) => (
+                    {sheetNames.map((sheet) => (
                       <option key={sheet} value={sheet}>
                         {sheet}
                       </option>
