@@ -20,10 +20,15 @@ export interface CleanedDataRow {
   engineerName: string;
   category: string;
   sourceSheet?: string;
+  _isHead?: boolean;
+  _isLine?: boolean;
+  _sourceSheet?: string;
 }
 
 export interface MultiTableData {
   procurement_data: CleanedDataRow[];
+  procurement_head: CleanedDataRow[];
+  procurement_line: CleanedDataRow[];
   suppliers_master: { name: string; last_seen: string }[];
   categories_master: { name: string; description: string }[];
   upload_logs: {
@@ -31,12 +36,29 @@ export interface MultiTableData {
     filename: string;
     row_count: number;
     status: string;
+    sheets_processed?: number;
+    sheet_details?: { sheet: string; rows: number }[];
   }[];
-}
+  dataBySheet?: { [sheetName: string]: CleanedDataRow[] };
+} 
 
 /**
  * Service for cleaning and standardizing procurement data
  */
+
+// Column mapping configuration - adjust these values based on your Excel file structure
+const COLUMN_MAPPING = {
+  DATE: "__EMPTY_2",        // Column C (3rd column)
+  PO_NUMBER: "__EMPTY_1",    // Column B (2nd column) 
+  SUPPLIER: "__EMPTY_3",      // Column E (5th column)
+  DESCRIPTION: "__EMPTY_5",   // Column G (7th column)
+  QUANTITY: "__EMPTY_7",      // Column H (8th column)
+  AMOUNT: "__EMPTY_9",       // Column J (10th column)
+  PROJECT: "__EMPTY_6",       // Column G (7th column) - using Description data
+  VAT: "__EMPTY_10",         // Column K (11th column)
+  ENGINEER: "__EMPTY_11",     // Column L (12th column)
+};
+
 export const DataCleaningService = {
   /**
    * Main cleaning pipeline
@@ -113,42 +135,130 @@ export const DataCleaningService = {
     cleanedData: CleanedDataRow[],
     filename: string,
   ): MultiTableData {
-    // 1. Procurement Data (Already cleaned)
+    console.log("📊 [DataCleaningService] Processing data into Head/Line tables...");
+    
+    // Group data by source sheet first
+    const dataBySheet = cleanedData.reduce((acc, row) => {
+      const sheetName = row.sourceSheet || 'Unknown';
+      if (!acc[sheetName]) acc[sheetName] = [];
+      acc[sheetName].push(row);
+      return acc;
+    }, {} as { [sheetName: string]: CleanedDataRow[] });
+    
+    // Separate Head and Line data based on PO number presence
+    const headData: CleanedDataRow[] = [];
+    const lineData: CleanedDataRow[] = [];
+    
+    // Track PO numbers to identify heads vs lines
+    const poNumbers = new Set<string>();
+    const processedPOs = new Set<string>();
+    
+    // First pass: collect all unique PO numbers
+    cleanedData.forEach(row => {
+      if (row.poNumber && row.poNumber.trim()) {
+        poNumbers.add(row.poNumber.trim());
+      }
+    });
+    
+    console.log(`📋 [DataCleaningService] Found ${poNumbers.size} unique PO numbers`);
+    
+    // Second pass: separate heads and lines
+    cleanedData.forEach(row => {
+      const poNum = row.poNumber?.trim();
+      
+      if (!poNum) {
+        // Row without PO number - treat as line item
+        lineData.push({
+          ...row,
+          _isHead: false,
+          _isLine: true,
+          _sourceSheet: row.sourceSheet || 'Unknown'
+        });
+      } else if (!processedPOs.has(poNum)) {
+        // First occurrence of this PO number - treat as head
+        processedPOs.add(poNum);
+        headData.push({
+          ...row,
+          _isHead: true,
+          _isLine: false,
+          _sourceSheet: row.sourceSheet || 'Unknown'
+        });
+      } else {
+        // Subsequent occurrence of same PO number - treat as line item
+        lineData.push({
+          ...row,
+          _isHead: false,
+          _isLine: true,
+          _sourceSheet: row.sourceSheet || 'Unknown'
+        });
+      }
+    });
+    
+    console.log(`📊 [DataCleaningService] Separated data:`, {
+      totalRows: cleanedData.length,
+      headRows: headData.length,
+      lineRows: lineData.length,
+      uniquePOs: poNumbers.size
+    });
+
+    // 1. Combined procurement data (for backward compatibility)
     const procurement_data = cleanedData;
 
-    // 2. Suppliers Master (Unique suppliers)
+    // 2. Head table (PO headers)
+    const procurement_head = headData.map(row => ({
+      ...row,
+      itemDescription: "HEADER", // Mark as header
+      quantity: 0,
+      unit: "HEADER",
+      unitPrice: 0,
+      totalPrice: 0,
+      category: "HEADER"
+    }));
+    
+    // 3. Line table (PO line items)
+    const procurement_line = lineData;
+
+    // 4. Suppliers Master (Unique suppliers from line data)
     const uniqueSuppliers = [
-      ...new Set(cleanedData.map((row) => row.supplierName)),
+      ...new Set(lineData.map((row) => row.supplierName)),
     ];
     const suppliers_master = uniqueSuppliers.map((name) => ({
       name,
       last_seen: format(new Date(), "yyyy-MM-dd HH:mm:ss"),
     }));
 
-    // 3. Categories Master (Unique categories)
+    // 5. Categories Master (Unique categories from line data)
     const uniqueCategories = [
-      ...new Set(cleanedData.map((row) => row.category)),
+      ...new Set(lineData.map((row) => row.category)),
     ];
     const categories_master = uniqueCategories.map((name) => ({
       name,
       description: `Auto-generated category for ${name}`,
     }));
 
-    // 4. Upload Logs
+    // 6. Upload Logs
     const upload_logs = [
       {
         timestamp: format(new Date(), "yyyy-MM-dd HH:mm:ss"),
         filename: filename,
         row_count: cleanedData.length,
         status: "Success",
+        sheets_processed: Object.keys(dataBySheet).length,
+        sheet_details: Object.entries(dataBySheet).map(([sheet, data]) => ({
+          sheet,
+          rows: data.length
+        }))
       },
     ];
 
     return {
       procurement_data,
+      procurement_head,
+      procurement_line,
       suppliers_master,
       categories_master,
       upload_logs,
+      dataBySheet
     };
   },
 
@@ -204,46 +314,19 @@ export const DataCleaningService = {
    */
   processRow(row: RawDataRow): CleanedDataRow {
     // 1. Extract Date
-    const rawDate = this.findValue(row, [
-      "DATE",
-      "Date",
-      "วันที่",
-      "PO Date",
-      "__EMPTY_2",
-    ]); // __EMPTY_2 for Excel merged headers
+    const rawDate = this.findValue(row, [COLUMN_MAPPING.DATE]);
     const cleanedDate = this.parseDate(rawDate);
 
     // 2. Extract PO Number
     const poNumber = (
-      this.findValue(row, [
-        "PO",
-        "PO_Number",
-        "เลขที่ PO",
-        "PO.NO.",
-        "PO NO",
-        "__EMPTY_1", // For Excel files with merged headers
-      ]) || ""
+      this.findValue(row, [COLUMN_MAPPING.PO_NUMBER]) || ""
     )
       .toString()
       .trim();
 
-    // 3. Extract Supplier and Item (often merged in some formats)
-    const rawSupplier = this.findValue(row, [
-      "Supplier",
-      "ผู้ขาย",
-      "ชื่อผู้ขาย",
-      "Supplier Name",
-      "Vendor",
-    ]);
-    const rawDescription = this.findValue(row, [
-      "Description",
-      "รายละเอียด",
-      "รายการ",
-      "Item Description",
-      "Item_Description",
-      "__EMPTY_3", // For Excel merged headers
-      "__EMPTY_4", // Alternative location
-    ]);
+    // 3. Extract Supplier and Item
+    const rawSupplier = this.findValue(row, [COLUMN_MAPPING.SUPPLIER]);
+    const rawDescription = this.findValue(row, [COLUMN_MAPPING.DESCRIPTION]);
 
     let { supplierName, itemDescription } = this.splitCombinedField(
       rawSupplier?.toString() || "",
@@ -253,48 +336,22 @@ export const DataCleaningService = {
     }
 
     // 4. Extract Project Code
-    const rawProject = this.findValue(row, [
-      "Project",
-      "Project Code",
-      "โครงการ",
-      "Project_Code",
-      "ProjectNo",
-    ]);
+    const rawProject = this.findValue(row, [COLUMN_MAPPING.PROJECT]);
     let { unit, projectCode } = this.splitProjectUnit(
       rawProject?.toString() || "",
     );
 
     // 5. Extract Quantity and Price
-    const rawQty = this.findValue(row, [
-      "Qty",
-      "Quantity",
-      "จำนวน",
-      "__EMPTY_5",
-    ]);
-    const rawPrice = this.findValue(row, [
-      "Price",
-      "Amount",
-      "ราคา",
-      "จำนวนเงิน",
-      "Unit_Price",
-      "Total Amount",
-      "TotalValue",
-      "__EMPTY_6", // For Excel merged headers
-      "__EMPTY_8", // Alternative location
-    ]);
+    const rawQty = this.findValue(row, [COLUMN_MAPPING.QUANTITY]);
+    const rawPrice = this.findValue(row, [COLUMN_MAPPING.AMOUNT]);
 
     const quantity = this.parseNumber(rawQty) || 1;
     const unitPrice = this.parseNumber(rawPrice);
     const totalPrice = quantity * unitPrice;
 
     // 6. Extract VAT and Engineer
-    const rawVat = this.findValue(row, ["VAT", "ภาษี", "VAT_Rate"]);
-    const rawEngineer = this.findValue(row, [
-      "Engineer",
-      "ผู้อนุมัติ",
-      "วิศวกร",
-      "Engineer_Name",
-    ]);
+    const rawVat = this.findValue(row, [COLUMN_MAPPING.VAT]);
+    const rawEngineer = this.findValue(row, [COLUMN_MAPPING.ENGINEER]);
 
     const vatRate = this.formatVat(rawVat?.toString() || "");
     const engineerName = rawEngineer?.toString().trim() || "Unassigned";

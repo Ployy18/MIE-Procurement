@@ -33,41 +33,112 @@ const DataCleaningService = {
       throw new Error("Invalid data format: cleanedData must be an array");
     }
 
-    const procurement_data = cleanedData;
+    // Separate Head and Line data
+    const headData = cleanedData.filter(row => row._isHead);
+    const lineData = cleanedData.filter(row => row._isLine);
+    
+    // Group data by source sheet
+    const dataBySheet = cleanedData.reduce((acc, row) => {
+      const sheetName = row._sourceSheet || 'Unknown';
+      if (!acc[sheetName]) acc[sheetName] = [];
+      acc[sheetName].push(row);
+      return acc;
+    }, {});
+    
+    console.log("📊 [DataCleaningService] Data grouped by sheets:", {
+      totalSheets: Object.keys(dataBySheet).length,
+      sheetNames: Object.keys(dataBySheet),
+      sheetDataCounts: Object.entries(dataBySheet).map(([sheet, data]) => ({
+        sheet,
+        rows: data.length,
+        heads: data.filter(r => r._isHead).length,
+        lines: data.filter(r => r._isLine).length
+      }))
+    });
+    
+    // 1. Combined procurement data (for backward compatibility)
+    const procurement_data = lineData; // Use line data as main data
+    
+    // 2. Head table (PO headers only)
+    const procurement_head = headData.map(row => ({
+      ...row,
+      // Map head-specific fields
+      date: row.date,
+      poNumber: row.poNumber,
+      supplierName: row.supplierName,
+      itemDescription: "HEADER", // Mark as header
+      quantity: 0,
+      unit: "HEADER",
+      projectCode: row.projectCode,
+      unitPrice: 0,
+      totalPrice: 0,
+      vatRate: row.vatRate,
+      engineerName: row.engineerName,
+      category: "HEADER",
+      sourceSheet: row.sourceSheet
+    }));
+    
+    // 3. Line table (PO line items)
+    const procurement_line = lineData.map(row => ({
+      ...row,
+      // Map line-specific fields
+      date: row.date,
+      poNumber: row.poNumber,
+      supplierName: row.supplierName,
+      itemDescription: row.itemDescription,
+      quantity: row.quantity,
+      unit: row.unit,
+      projectCode: row.projectCode,
+      unitPrice: row.unitPrice,
+      totalPrice: row.totalPrice,
+      vatRate: row.vatRate,
+      engineerName: row.engineerName,
+      category: row.category,
+      sourceSheet: row.sourceSheet
+    }));
 
-    // 2. Suppliers Master (Unique suppliers)
+    // 4. Suppliers Master (Unique suppliers from line data)
     const uniqueSuppliers = [
-      ...new Set(cleanedData.map((row) => row.supplierName).filter(Boolean)),
+      ...new Set(lineData.map((row) => row.supplierName).filter(Boolean)),
     ];
     const suppliers_master = uniqueSuppliers.map((name) => ({
       name,
       last_seen: format(new Date(), "yyyy-MM-dd HH:mm:ss"),
     }));
 
-    // 3. Categories Master (Unique categories)
+    // 5. Categories Master (Unique categories from line data)
     const uniqueCategories = [
-      ...new Set(cleanedData.map((row) => row.category).filter(Boolean)),
+      ...new Set(lineData.map((row) => row.category).filter(Boolean)),
     ];
     const categories_master = uniqueCategories.map((name) => ({
       name,
       description: `Auto-generated category for ${name}`,
     }));
 
-    // 4. Upload Logs
+    // 6. Upload Logs
     const upload_logs = [
       {
         timestamp: format(new Date(), "yyyy-MM-dd HH:mm:ss"),
         filename: filename || "unknown_file",
-        row_count: cleanedData.length,
+        row_count: lineData.length,
         status: "Success",
+        sheets_processed: Object.keys(dataBySheet).length,
+        // Convert sheet_details to JSON string for Google Sheets compatibility
+        sheet_details: JSON.stringify(Object.entries(dataBySheet).map(([sheet, data]) => ({
+          sheet,
+          rows: data.length
+        })))
       },
     ];
 
     return {
       procurement_data,
+      procurement_head,
+      procurement_line,
       suppliers_master,
       categories_master,
       upload_logs,
+      dataBySheet: dataBySheet
     };
   },
 };
@@ -105,11 +176,19 @@ async function writeTableToSheet(sheetName, data) {
         },
       });
     } else {
-      // Clear existing data - specifically A1:Z (adjust if more columns are needed)
-      await sheets.spreadsheets.values.clear({
+      // Clear existing data - specifically A1:ZZ (expand range for more columns)
+      const gridData = await sheets.spreadsheets.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${sheetName}!A1:Z`,
+        range: `${sheetName}!A1:ZZ1`,
       });
+      
+      // Only clear if there's actual data
+      if (gridData.data.values && gridData.data.values.length > 0) {
+        await sheets.spreadsheets.values.clear({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${sheetName}!A1:ZZ`,
+        });
+      }
     }
 
     // Write new data
@@ -262,34 +341,79 @@ app.post("/api/upload", async (req, res) => {
 
   try {
     // Process and split data
+    console.log("🔍 [Server] Processing data for upload:", {
+      totalRows: data.length,
+      filename: filename
+    });
+    
     const tables = DataCleaningService.processMultiTableData(
       data,
       filename || "web-upload.xlsx",
     );
+    
+    console.log("📊 [Server] Processed tables:", {
+      procurementData: tables.procurement_data.length,
+      procurementHead: tables.procurement_head.length,
+      procurementLine: tables.procurement_line.length,
+      suppliers: tables.suppliers_master.length,
+      categories: tables.categories_master.length
+    });
 
     const results = {};
 
-    // 1. Procurement Data (Overwrite)
-    results.procurement = await writeTableToSheet(
+    // 1. Procurement Data (Append) - Use line items only for main data
+    console.log("💾 [Server] Appending procurement_data with", tables.procurement_line.length, "rows");
+    results.procurement = await appendTableToSheet(
       "procurement_data",
-      tables.procurement_data,
+      tables.procurement_line, // Use line data instead of combined data
     );
 
-    // 2. Suppliers Master (Update - Only new)
+    // 2. Procurement Head (Append) - PO headers only
+    console.log("💾 [Server] Appending procurement_head with", tables.procurement_head.length, "rows");
+    results.head = await appendTableToSheet(
+      "procurement_head",
+      tables.procurement_head,
+    );
+
+    // 3. Procurement Line (Append) - Line items separate
+    console.log("💾 [Server] Appending procurement_line with", tables.procurement_line.length, "rows");
+    results.line = await appendTableToSheet(
+      "procurement_line",
+      tables.procurement_line,
+    );
+
+    // 4. Create individual sheets for each source sheet
+    if (tables.dataBySheet) {
+      for (const [sheetName, sheetData] of Object.entries(tables.dataBySheet)) {
+        const cleanSheetName = sheetName.replace(/[^a-zA-Z0-9_]/g, '_');
+        console.log(`💾 [Server] Writing individual sheet: sheet_${cleanSheetName} with ${sheetData.length} rows`);
+        const result = await writeTableToSheet(
+          `sheet_${cleanSheetName}`,
+          sheetData
+        );
+        results[`sheet_${cleanSheetName}`] = result;
+        console.log(`📊 [Server] Created individual sheet: sheet_${cleanSheetName} with ${sheetData.length} rows`);
+      }
+    }
+
+    // 5. Suppliers Master (Update - Only new)
+    console.log("💾 [Server] Writing suppliers_master with", tables.suppliers_master.length, "rows");
     results.suppliers = await updateMasterSheet(
       "suppliers_master",
       tables.suppliers_master,
       "name",
     );
 
-    // 3. Categories Master (Update - Only new)
+    // 6. Categories Master (Update - Only new)
+    console.log("💾 [Server] Writing categories_master with", tables.categories_master.length, "rows");
     results.categories = await updateMasterSheet(
       "categories_master",
       tables.categories_master,
       "name",
     );
 
-    // 4. Upload Logs (Append)
+    // 7. Upload Logs (Append)
+    console.log("💾 [Server] Writing upload_logs with", tables.upload_logs.length, "rows");
     results.logs = await appendTableToSheet("upload_logs", tables.upload_logs);
 
     res.json({
@@ -299,9 +423,16 @@ app.post("/api/upload", async (req, res) => {
         timestamp: new Date().toISOString(),
         filename: filename,
         stats: {
-          procurementRows: tables.procurement_data.length,
+          procurementRows: tables.procurement_line.length, // Use line data length
+          headRows: tables.procurement_head.length,
+          lineRows: tables.procurement_line.length,
           suppliersCount: tables.suppliers_master.length,
           categoriesCount: tables.categories_master.length,
+          sheetsProcessed: Object.keys(tables.dataBySheet || {}).length,
+          sheetDetails: Object.entries(tables.dataBySheet || {}).map(([sheet, data]) => ({
+            sheet,
+            rows: data.length
+          }))
         },
         details: results,
       },
@@ -329,6 +460,8 @@ app.get("/api/sheets", async (req, res) => {
     // List of standard sheets we manage
     const standardSheets = [
       "procurement_data",
+      "procurement_head",  // New: Head table
+      "procurement_line",  // New: Line table
       "suppliers_master",
       "categories_master",
       "upload_logs",

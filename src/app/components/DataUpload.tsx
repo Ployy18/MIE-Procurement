@@ -10,15 +10,20 @@ import {
   Loader2,
   Trash2,
   Table as TableIcon,
+  FileSpreadsheet,
+  Users,
+  Package,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   DataCleaningService,
   CleanedDataRow,
+  MultiTableData,
 } from "../../services/dataCleaning";
 import { uploadMultiTableData } from "../../services/googleSheetsService";
 import { ChartContainer } from "./ChartContainer";
 import { Button } from "./ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import {
   Table,
   TableBody,
@@ -34,24 +39,35 @@ export function DataUpload() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [rawData, setRawData] = useState<any[]>([]);
   const [cleanedData, setCleanedData] = useState<CleanedDataRow[]>([]);
+  const [multiTableData, setMultiTableData] = useState<MultiTableData | null>(null);
   const [step, setStep] = useState<"upload" | "preview" | "success">("upload");
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     console.log(" [DataUpload] Files dropped:", acceptedFiles);
-    
+
     const selectedFile = acceptedFiles[0];
-    if (selectedFile && (selectedFile.type === "text/csv" || selectedFile.name.endsWith(".csv") || selectedFile.name.endsWith(".xlsx") || selectedFile.name.endsWith(".xls"))) {
+    if (
+      selectedFile &&
+      (selectedFile.type === "text/csv" ||
+        selectedFile.name.endsWith(".csv") ||
+        selectedFile.name.endsWith(".xlsx") ||
+        selectedFile.name.endsWith(".xls"))
+    ) {
       console.log(" [DataUpload] Valid file detected:", {
         name: selectedFile.name,
         size: selectedFile.size,
         type: selectedFile.type,
-        lastModified: new Date(selectedFile.lastModified)
+        lastModified: new Date(selectedFile.lastModified),
       });
-      
+
       setFile(selectedFile);
       handleFileProcess(selectedFile);
     } else {
-      console.error(" [DataUpload] Invalid file type:", selectedFile?.name, selectedFile?.type);
+      console.error(
+        " [DataUpload] Invalid file type:",
+        selectedFile?.name,
+        selectedFile?.type,
+      );
       toast.error("Please upload a valid CSV or Excel file");
     }
   }, []);
@@ -73,11 +89,14 @@ export function DataUpload() {
     setIsProcessing(true);
     try {
       let data: any[] = [];
-      
+
       if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
         console.log("📊 [DataUpload] Processing Excel file...");
         data = await DataCleaningService.parseExcel(file);
-        console.log("✅ [DataUpload] Excel parsing completed, rows:", data.length);
+        console.log(
+          "✅ [DataUpload] Excel parsing completed, rows:",
+          data.length,
+        );
       } else {
         console.log("📋 [DataUpload] Processing CSV file...");
         // PapaParse for CSV
@@ -104,22 +123,27 @@ export function DataUpload() {
 
       console.log("🧹 [DataUpload] Starting data cleaning...");
       console.log("📊 [DataUpload] Raw data sample:", data.slice(0, 3));
-      
+
       setRawData(data);
       const cleaned = DataCleaningService.cleanData(data);
-      
+
       console.log("✨ [DataUpload] Data cleaning completed:", {
         originalRows: data.length,
         cleanedRows: cleaned.length,
-        filteredRows: data.length - cleaned.length
+        filteredRows: data.length - cleaned.length,
       });
       console.log("📋 [DataUpload] Cleaned data sample:", cleaned.slice(0, 2));
-      
+
       setCleanedData(cleaned);
+      
+      // Process into Head/Line tables
+      const multiTable = DataCleaningService.processMultiTableData(cleaned, file.name);
+      setMultiTableData(multiTable);
+      
       setIsProcessing(false);
       setStep("preview");
-      toast.success(`Successfully processed ${cleaned.length} rows`);
-      
+      toast.success(`Successfully processed ${cleaned.length} rows (${multiTable.procurement_head.length} heads, ${multiTable.procurement_line.length} lines)`);
+
       console.log("🎯 [DataUpload] Processing completed successfully!");
     } catch (error) {
       console.error("💥 [DataUpload] File Processing Error:", error);
@@ -132,24 +156,28 @@ export function DataUpload() {
     setFile(null);
     setRawData([]);
     setCleanedData([]);
+    setMultiTableData(null);
     setStep("upload");
   };
 
   const handleCommit = async () => {
     console.log("💾 [DataUpload] Starting data commit process...");
-    
+
     if (!file || cleanedData.length === 0) {
-      console.error("❌ [DataUpload] Cannot commit - missing file or no cleaned data:", {
-        hasFile: !!file,
-        cleanedDataLength: cleanedData.length
-      });
+      console.error(
+        "❌ [DataUpload] Cannot commit - missing file or no cleaned data:",
+        {
+          hasFile: !!file,
+          cleanedDataLength: cleanedData.length,
+        },
+      );
       return;
     }
 
     console.log("📤 [DataUpload] Preparing to upload:", {
       fileName: file.name,
       dataRows: cleanedData.length,
-      dataSample: cleanedData.slice(0, 2)
+      dataSample: cleanedData.slice(0, 2),
     });
 
     setIsProcessing(true);
@@ -157,7 +185,7 @@ export function DataUpload() {
       // Upload to Google Sheets via Node.js Backend
       console.log("🌐 [DataUpload] Sending data to backend...");
       const result = await uploadMultiTableData(cleanedData, file.name);
-      
+
       console.log("📨 [DataUpload] Backend response:", result);
 
       if (result.success) {
@@ -247,6 +275,24 @@ export function DataUpload() {
                     <p className="text-sm text-gray-500">
                       Found {cleanedData.length} valid rows from {file?.name}
                     </p>
+                    <div className="flex gap-6 mt-2 text-xs">
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                        <span className="text-blue-600 font-semibold">Head: {multiTableData?.procurement_head.length || 0}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                        <span className="text-green-600 font-semibold">Line: {multiTableData?.procurement_line.length || 0}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                        <span className="text-purple-600 font-semibold">Suppliers: {multiTableData?.suppliers_master.length || 0}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                        <span className="text-orange-600 font-semibold">Total: ฿{cleanedData.reduce((sum, r) => sum + (r.totalPrice || 0), 0).toLocaleString()}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="flex gap-3">
@@ -273,52 +319,199 @@ export function DataUpload() {
               </div>
 
               <div className="border rounded-2xl overflow-hidden bg-white shadow-sm">
-                <div className="max-h-[500px] overflow-auto">
-                  <Table>
-                    <TableHeader className="bg-gray-50 sticky top-0 z-10">
-                      <TableRow>
-                        <TableHead className="w-[100px]">Date</TableHead>
-                        <TableHead>PO Number</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Project</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {cleanedData.slice(0, 50).map((row, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell className="font-medium text-gray-600">
-                            {row.date}
-                          </TableCell>
-                          <TableCell>{row.poNumber}</TableCell>
-                          <TableCell className="max-w-[200px] truncate">
-                            {row.supplierName}
-                          </TableCell>
-                          <TableCell className="max-w-[300px] truncate">
-                            {row.itemDescription}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold text-blue-600">
-                            {row.totalPrice.toLocaleString()} ฿
-                          </TableCell>
-                          <TableCell>
-                            <span className="px-2 py-1 rounded-full text-[10px] font-bold uppercase bg-gray-100 text-gray-600">
-                              {row.category}
-                            </span>
-                          </TableCell>
-                          <TableCell>{row.projectCode}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                {cleanedData.length > 50 && (
-                  <div className="p-4 bg-gray-50 text-center text-sm text-gray-500 border-t">
-                    Showing first 50 rows. {cleanedData.length - 50} more rows
-                    hidden.
-                  </div>
-                )}
+                <Tabs defaultValue="all" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3 bg-gray-50 border-b">
+                    <TabsTrigger value="all" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <FileSpreadsheet className="w-4 h-4" />
+                        All Data ({cleanedData.length})
+                      </div>
+                    </TabsTrigger>
+                    <TabsTrigger value="head" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Package className="w-4 h-4" />
+                        Head ({multiTableData?.procurement_head.length || 0})
+                      </div>
+                    </TabsTrigger>
+                    <TabsTrigger value="line" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        Line ({multiTableData?.procurement_line.length || 0})
+                      </div>
+                    </TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="all" className="m-0">
+                    <div className="max-h-[500px] overflow-auto">
+                      <Table>
+                        <TableHeader className="bg-gray-50 sticky top-0 z-10">
+                          <TableRow>
+                            <TableHead className="w-[100px]">Date</TableHead>
+                            <TableHead>PO Number</TableHead>
+                            <TableHead>Supplier</TableHead>
+                            <TableHead>Description</TableHead>
+                            <TableHead className="text-right">Amount</TableHead>
+                            <TableHead>Category</TableHead>
+                            <TableHead>Project</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {cleanedData.slice(0, 50).map((row, idx) => {
+                            const isHead = (row as any)._isHead;
+                            const isLine = (row as any)._isLine;
+                            
+                            return (
+                              <TableRow key={idx} className={isHead ? 'bg-blue-50/50' : isLine ? 'bg-green-50/50' : ''}>
+                                <TableCell className="font-medium text-gray-600">
+                                  {row.date}
+                                </TableCell>
+                                <TableCell>
+                                  {row.poNumber}
+                                  {isHead && (
+                                    <span className="ml-2 text-[10px] bg-blue-100 text-blue-800 px-1 rounded">
+                                      HEAD
+                                    </span>
+                                  )}
+                                  {isLine && (
+                                    <span className="ml-2 text-[10px] bg-green-100 text-green-800 px-1 rounded">
+                                      LINE
+                                    </span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="max-w-[200px] truncate">
+                                  {row.supplierName}
+                                </TableCell>
+                                <TableCell className="max-w-[300px] truncate">
+                                  {row.itemDescription}
+                                </TableCell>
+                                <TableCell className="text-right font-semibold text-blue-600">
+                                  {row.totalPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿
+                                </TableCell>
+                                <TableCell>
+                                  <span
+                                    className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                                      row.category === 'HEADER' 
+                                        ? 'bg-blue-100 text-blue-600'
+                                        : 'bg-gray-100 text-gray-600'
+                                    }`}
+                                  >
+                                    {row.category}
+                                  </span>
+                                </TableCell>
+                                <TableCell>{row.projectCode}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    {cleanedData.length > 50 && (
+                      <div className="p-4 bg-gray-50 text-center text-sm text-gray-500 border-t">
+                        Showing first 50 rows. {cleanedData.length - 50} more rows hidden.
+                      </div>
+                    )}
+                  </TabsContent>
+                  
+                  <TabsContent value="head" className="m-0">
+                    <div className="max-h-[500px] overflow-auto">
+                      <Table>
+                        <TableHeader className="bg-blue-50 sticky top-0 z-10">
+                          <TableRow>
+                            <TableHead className="w-[100px]">Date</TableHead>
+                            <TableHead>PO Number</TableHead>
+                            <TableHead>Supplier</TableHead>
+                            <TableHead>Engineer</TableHead>
+                            <TableHead>VAT Rate</TableHead>
+                            <TableHead>Project</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(multiTableData?.procurement_head || []).slice(0, 50).map((row, idx) => (
+                            <TableRow key={idx} className="bg-blue-50/30">
+                              <TableCell className="font-medium text-gray-600">
+                                {row.date}
+                              </TableCell>
+                              <TableCell className="font-semibold">
+                                {row.poNumber}
+                              </TableCell>
+                              <TableCell className="max-w-[200px] truncate">
+                                {row.supplierName}
+                              </TableCell>
+                              <TableCell>{row.engineerName}</TableCell>
+                              <TableCell>
+                                <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+                                  {row.vatRate}
+                                </span>
+                              </TableCell>
+                              <TableCell>{row.projectCode}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    {(multiTableData?.procurement_head.length || 0) > 50 && (
+                      <div className="p-4 bg-blue-50 text-center text-sm text-blue-600 border-t">
+                        Showing first 50 head rows. {(multiTableData?.procurement_head.length || 0) - 50} more rows hidden.
+                      </div>
+                    )}
+                  </TabsContent>
+                  
+                  <TabsContent value="line" className="m-0">
+                    <div className="max-h-[500px] overflow-auto">
+                      <Table>
+                        <TableHeader className="bg-green-50 sticky top-0 z-10">
+                          <TableRow>
+                            <TableHead className="w-[100px]">Date</TableHead>
+                            <TableHead>PO Number</TableHead>
+                            <TableHead>Supplier</TableHead>
+                            <TableHead>Description</TableHead>
+                            <TableHead className="text-right">Qty</TableHead>
+                            <TableHead className="text-right">Unit Price</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                            <TableHead>Category</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(multiTableData?.procurement_line || []).slice(0, 50).map((row, idx) => (
+                            <TableRow key={idx} className="bg-green-50/30">
+                              <TableCell className="font-medium text-gray-600">
+                                {row.date}
+                              </TableCell>
+                              <TableCell className="font-mono text-sm">
+                                {row.poNumber}
+                              </TableCell>
+                              <TableCell className="max-w-[200px] truncate">
+                                {row.supplierName}
+                              </TableCell>
+                              <TableCell className="max-w-[300px] truncate">
+                                {row.itemDescription}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {row.quantity} {row.unit}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                ฿{row.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-right font-semibold text-green-600">
+                                ฿{row.totalPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell>
+                                <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+                                  {row.category}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    {(multiTableData?.procurement_line.length || 0) > 50 && (
+                      <div className="p-4 bg-green-50 text-center text-sm text-green-600 border-t">
+                        Showing first 50 line rows. {(multiTableData?.procurement_line.length || 0) - 50} more rows hidden.
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
               </div>
             </motion.div>
           )}
