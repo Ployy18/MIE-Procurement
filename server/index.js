@@ -123,10 +123,11 @@ const DataCleaningService = {
         row_count: lineData.length,
         status: "Success",
         sheets_processed: Object.keys(dataBySheet).length,
-        sheet_details: Object.entries(dataBySheet).map(([sheet, data]) => ({
+        // Convert sheet_details to JSON string for Google Sheets compatibility
+        sheet_details: JSON.stringify(Object.entries(dataBySheet).map(([sheet, data]) => ({
           sheet,
           rows: data.length
-        }))
+        })))
       },
     ];
 

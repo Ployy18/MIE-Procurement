@@ -40,7 +40,7 @@ export interface MultiTableData {
     sheet_details?: { sheet: string; rows: number }[];
   }[];
   dataBySheet?: { [sheetName: string]: CleanedDataRow[] };
-}
+} 
 
 /**
  * Service for cleaning and standardizing procurement data
