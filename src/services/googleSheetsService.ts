@@ -1,4 +1,4 @@
-import Papa from "papaparse";
+import * as Papa from "papaparse";
 
 // Configuration for Node.js Backend
 const BACKEND_CONFIG = {
@@ -48,6 +48,7 @@ const dataCache = new Map<string, { data: SheetData; timestamp: number }>();
 export async function uploadMultiTableData(
   cleanedData: any[],
   filename: string,
+  tables?: any,
 ): Promise<UploadResult> {
   try {
     const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/upload`, {
@@ -58,6 +59,7 @@ export async function uploadMultiTableData(
       body: JSON.stringify({
         data: cleanedData,
         filename: filename,
+        tables: tables,
       }),
       signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
     });
@@ -230,6 +232,259 @@ export function clearCache(): void {
 }
 
 /**
+ * Update sheet data in Google Sheets
+ */
+export async function updateSheetData(
+  sheetName: string,
+  data: any[],
+): Promise<any> {
+  try {
+    const response = await fetch(
+      `${BACKEND_CONFIG.BASE_URL}/api/update-sheet`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sheetName, data }),
+        signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      // Try to parse as JSON, if fails use text
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    // Check if response is actually JSON before parsing
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
+
+    // Clear cache for this sheet
+    dataCache.delete(sheetName);
+
+    return result.data;
+  } catch (error) {
+    console.error("Error updating sheet data:", error);
+    throw new Error(
+      `Error updating sheet data: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Delete file data from all tables
+ */
+export async function deleteFileData(filename: string): Promise<any> {
+  try {
+    const response = await fetch(
+      `${BACKEND_CONFIG.BASE_URL}/api/file/${encodeURIComponent(filename)}`,
+      {
+        method: "DELETE",
+        signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
+
+    // Clear cache for all affected sheets
+    dataCache.delete("upload_logs");
+    dataCache.delete("procurement_data");
+    dataCache.delete("procurement_head");
+    dataCache.delete("procurement_line");
+
+    return result.data;
+  } catch (error) {
+    console.error("Error deleting file data:", error);
+    throw new Error(
+      `Error deleting file data: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Get batch information
+ */
+export async function getBatchInformation(): Promise<any> {
+  try {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/batches`, {
+      method: "GET",
+      signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
+
+    return result.data;
+  } catch (error) {
+    console.error("Error fetching batch information:", error);
+    throw new Error(
+      `Error fetching batch information: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Delete batch data from all tables
+ */
+export async function deleteBatchData(batchId: string): Promise<any> {
+  try {
+    const response = await fetch(
+      `${BACKEND_CONFIG.BASE_URL}/api/batch/${encodeURIComponent(batchId)}`,
+      {
+        method: "DELETE",
+        signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
+
+    // Clear cache for all affected sheets
+    dataCache.delete("upload_logs");
+    dataCache.delete("procurement_data");
+    dataCache.delete("procurement_head");
+    dataCache.delete("procurement_line");
+
+    return result.data;
+  } catch (error) {
+    console.error("Error deleting batch data:", error);
+    throw new Error(
+      `Error deleting batch data: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
  * Get cache statistics
  */
 export function getCacheStats(): { size: number; keys: string[] } {
@@ -252,6 +507,10 @@ export async function getTab1Data(): Promise<SheetData> {
 
 export async function getTab2Data(): Promise<SheetData> {
   return getSheetDataByName("procurement_data");
+}
+
+export async function getProcurementLineData(): Promise<SheetData> {
+  return getSheetDataByName("procurement_line");
 }
 
 export async function getSheetNamesDynamic(): Promise<string[]> {

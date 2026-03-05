@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { BrowserRouter } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { ProcurementOverview } from "./components/ProcurementOverview";
@@ -17,7 +18,7 @@ export default function App() {
       case "overview":
         return "Procurement Overview";
       case "insight":
-        return "Supplier & Cost Intelligence";
+        return "Cost Intelligence";
       case "forecast":
         return "Forecast & Planning";
       case "data-upload":
@@ -35,36 +36,46 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans selection:bg-blue-500/30">
-      <Sidebar currentView={currentView} onChangeView={setCurrentView} />
+    <BrowserRouter>
+      <div className="min-h-screen bg-white text-gray-900 font-sans selection:bg-blue-500/30">
+        <Sidebar currentView={currentView} onChangeView={setCurrentView} />
 
-      <div className="pl-20 flex flex-col min-h-screen">
-        <Header
-          title={getTitle()}
-          onFilterChange={handleFilterChange}
-          showFilters={currentView !== "forecast"}
-        />
+        <div className="pl-20 flex flex-col min-h-screen">
+          <Header
+            title={getTitle()}
+            onFilterChange={handleFilterChange}
+            showFilters={
+              currentView !== "forecast" &&
+              currentView !== "data-upload" &&
+              currentView !== "data-source"
+            }
+          />
 
-        <main className="flex-1 p-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentView}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.3 }}
-            >
-              {currentView === "overview" && (
-                <ProcurementOverview filters={filters} />
-              )}
-              {currentView === "insight" && <CostInsights />}
-              {currentView === "forecast" && <ForecastPlanning />}
-              {currentView === "data-source" && <DataSource />}
-              {currentView === "data-upload" && <DataUpload />}
-            </motion.div>
-          </AnimatePresence>
-        </main>
+          <main className="flex-1 p-8">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentView}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
+              >
+                {currentView === "overview" && (
+                  <ProcurementOverview filters={filters} />
+                )}
+                {currentView === "insight" && (
+                  <CostInsights filters={filters} />
+                )}
+                {currentView === "forecast" && <ForecastPlanning />}
+                {currentView === "data-source" && <DataSource />}
+                {currentView === "data-upload" && (
+                  <DataUpload onChangeView={setCurrentView} />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
       </div>
-    </div>
+    </BrowserRouter>
   );
 }

@@ -32,7 +32,7 @@ export function KPICard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
-      className="group relative overflow-hidden rounded-2xl bg-white p-6 shadow-md border border-gray-200 hover:border-blue-400/50 transition-colors"
+      className="group relative overflow-visible rounded-2xl bg-white p-6 shadow-md border border-gray-200 hover:border-blue-400/50 transition-colors"
     >
       <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
 
@@ -44,7 +44,7 @@ export function KPICard({
           </h3>
           {title === "Total Amount" && (
             <p className="text-gray-500 text-xs mt-1">
-              Incl. VAT, Less Discount
+              Incl. VAT
             </p>
           )}
         </div>
