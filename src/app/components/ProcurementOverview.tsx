@@ -358,7 +358,6 @@ export function ProcurementOverview({
 
         setSupplierData(suppliersWithStats);
 
-        // 5. Category Statistics
         const categorySpend = filteredLine.reduce(
           (acc: Record<string, number>, row: any) => {
             const cat = row.Category || "Other";
@@ -369,9 +368,18 @@ export function ProcurementOverview({
           {},
         );
 
+        // Sort categories in specific order: Service, Material, Other
+        const categoryOrder = ["Service", "Material", "Other"];
         const sortedCategories = Object.entries(categorySpend)
           .map(([category, total]) => ({ category, total }))
-          .sort((a: any, b: any) => b.total - a.total);
+          .sort((a, b) => {
+            const aIndex = categoryOrder.indexOf(a.category);
+            const bIndex = categoryOrder.indexOf(b.category);
+            if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+            if (aIndex !== -1) return -1;
+            if (bIndex !== -1) return 1;
+            return a.category.localeCompare(b.category);
+          });
 
         setCategoryData(sortedCategories);
         setCurrentPage(1);
@@ -389,17 +397,21 @@ export function ProcurementOverview({
   const fetchSupplierPOs = async (supplierName: string) => {
     setLoadingPOs(true);
     try {
-      const lineDataResponse = await getSheetDataByName("procurement_line");
+      const [headDataResponse, lineDataResponse] = await Promise.all([
+        getSheetDataByName("procurement_head"),
+        getSheetDataByName("procurement_line"),
+      ]);
+      const headRows = headDataResponse.rows || [];
       const lineRows = lineDataResponse.rows || [];
 
-      // Filter by supplier name and existing dashboard filters
-      let supplierRows = lineRows.filter(
+      // Filter head data by supplier name and existing dashboard filters
+      let supplierHeadRows = headRows.filter(
         (row: any) => row.Supplier === supplierName,
       );
 
-      // Apply year/project filters if active
+      // Apply year/project filters if active for head data
       if (filters.year !== "all") {
-        supplierRows = supplierRows.filter((row: any) => {
+        supplierHeadRows = supplierHeadRows.filter((row: any) => {
           const dateStr = row.Date;
           if (dateStr) {
             let year;
@@ -418,31 +430,71 @@ export function ProcurementOverview({
         });
       }
       if (filters.project !== "all") {
-        supplierRows = supplierRows.filter(
+        supplierHeadRows = supplierHeadRows.filter(
           (row: any) => row.Project === filters.project,
         );
       }
 
-      // Group by PO Number
-      const poGroups = supplierRows.reduce(
+      // Filter line data similarly for line items
+      let supplierLineRows = lineRows.filter(
+        (row: any) => row.Supplier === supplierName,
+      );
+
+      // Apply year/project filters if active for line data
+      if (filters.year !== "all") {
+        supplierLineRows = supplierLineRows.filter((row: any) => {
+          const dateStr = row.Date;
+          if (dateStr) {
+            let year;
+            if (dateStr.includes("/")) {
+              const parts = dateStr.split("/");
+              year = parseInt(parts[2]);
+            } else if (dateStr.includes("-")) {
+              const parts = dateStr.split("-");
+              year = parseInt(parts[0]);
+            } else {
+              return false;
+            }
+            return year.toString() === filters.year;
+          }
+          return false;
+        });
+      }
+      if (filters.project !== "all") {
+        supplierLineRows = supplierLineRows.filter(
+          (row: any) => row.Project === filters.project,
+        );
+      }
+
+      // Group line items by PO Number
+      const lineItemGroups = supplierLineRows.reduce(
         (acc: Record<string, any>, row: any) => {
           const poNo = row["PO Number"];
           if (!acc[poNo]) {
-            acc[poNo] = {
-              poNumber: poNo,
-              date: row.Date,
-              projectCode: row.Project,
-              totalAmount: 0,
-              lineItems: [],
-            };
+            acc[poNo] = [];
           }
-          acc[poNo].totalAmount += parseFloat(row["Total Amount"]) || 0;
-          acc[poNo].lineItems.push({
+          acc[poNo].push({
             category: row.Category,
             unitPrice: parseFloat(row["Unit Price"]) || 0,
             amount: parseFloat(row["Total Amount"]) || 0,
             description: row.Description,
           });
+          return acc;
+        },
+        {},
+      );
+
+      // Create PO groups using head data for total amount and line data for items
+      const poGroups = supplierHeadRows.reduce(
+        (acc: Record<string, any>, row: any) => {
+          const poNo = row["PO Number"];
+          acc[poNo] = {
+            poNumber: poNo,
+            date: row.Date,
+            projectCode: row.Project,
+            totalAmount: parseFloat(row["Total Amount"]) || 0, // Use Total Amount from procurement_head
+            lineItems: lineItemGroups[poNo] || [], // Get line items from grouped line data
+          };
           return acc;
         },
         {},
@@ -492,7 +544,14 @@ export function ProcurementOverview({
             />
             <KPICard
               title="Total Amount"
-              value={loading ? "Loading..." : `${totalAmount.toLocaleString()}`}
+              value={
+                loading
+                  ? "Loading..."
+                  : totalAmount.toLocaleString("en-US", {
+                      minimumFractionDigits: totalAmount % 1 === 0 ? 0 : 2,
+                      maximumFractionDigits: 2,
+                    })
+              }
               trend=""
               trendUp={false}
               icon={FaMoneyBill}
@@ -502,7 +561,13 @@ export function ProcurementOverview({
             <KPICard
               title="Total Service Cost"
               value={
-                loading ? "Loading..." : `${totalServiceCosts.toLocaleString()}`
+                loading
+                  ? "Loading..."
+                  : totalServiceCosts.toLocaleString("en-US", {
+                      minimumFractionDigits:
+                        totalServiceCosts % 1 === 0 ? 0 : 2,
+                      maximumFractionDigits: 2,
+                    })
               }
               trend=""
               trendUp={true}
@@ -515,7 +580,11 @@ export function ProcurementOverview({
               value={
                 loading
                   ? "Loading..."
-                  : `${totalMaterialCosts.toLocaleString()}`
+                  : totalMaterialCosts.toLocaleString("en-US", {
+                      minimumFractionDigits:
+                        totalMaterialCosts % 1 === 0 ? 0 : 2,
+                      maximumFractionDigits: 2,
+                    })
               }
               trend=""
               trendUp={true}
@@ -526,7 +595,12 @@ export function ProcurementOverview({
             <KPICard
               title="Total Other Cost"
               value={
-                loading ? "Loading..." : `${totalOtherCosts.toLocaleString()}`
+                loading
+                  ? "Loading..."
+                  : totalOtherCosts.toLocaleString("en-US", {
+                      minimumFractionDigits: totalOtherCosts % 1 === 0 ? 0 : 2,
+                      maximumFractionDigits: 2,
+                    })
               }
               trend=""
               trendUp={true}
@@ -555,19 +629,21 @@ export function ProcurementOverview({
                 <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200">
                   <button
                     onClick={() => setChartView("month")}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${chartView === "month"
-                      ? "bg-white text-blue-600 shadow-sm"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"
-                      }`}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                      chartView === "month"
+                        ? "bg-white text-blue-600 shadow-sm"
+                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"
+                    }`}
                   >
                     Month
                   </button>
                   <button
                     onClick={() => setChartView("year")}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${chartView === "year"
-                      ? "bg-white text-blue-600 shadow-sm"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"
-                      }`}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                      chartView === "year"
+                        ? "bg-white text-blue-600 shadow-sm"
+                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"
+                    }`}
                   >
                     Year
                   </button>
@@ -612,7 +688,11 @@ export function ProcurementOverview({
                       tick={{ dy: -2 }}
                       interval={0}
                       tickFormatter={(value, index) => {
-                        if (!monthlyExpenseData || monthlyExpenseData.length === 0) return "";
+                        if (
+                          !monthlyExpenseData ||
+                          monthlyExpenseData.length === 0
+                        )
+                          return "";
                         const yearGroups: { [key: string]: number[] } = {};
                         monthlyExpenseData.forEach((item: any, idx: number) => {
                           const year = item.year;
@@ -638,7 +718,10 @@ export function ProcurementOverview({
                     tickLine={false}
                     axisLine={false}
                     tickFormatter={(value) =>
-                      `${(value / 1000).toLocaleString()}k`
+                      `${(value / 1000).toLocaleString("en-US", {
+                        minimumFractionDigits: (value / 1000) % 1 === 0 ? 0 : 2,
+                        maximumFractionDigits: 2,
+                      })}k`
                     }
                   />
                   <Tooltip
@@ -651,7 +734,8 @@ export function ProcurementOverview({
                       fontSize: "14px",
                       lineHeight: "1.5",
                       fontFamily: "inherit",
-                      boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+                      boxShadow:
+                        "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
                     }}
                     labelStyle={{
                       fontWeight: 700,
@@ -667,7 +751,10 @@ export function ProcurementOverview({
                       padding: "0px",
                     }}
                     formatter={(value: number) => [
-                      `${value.toLocaleString()}`,
+                      `${value.toLocaleString("en-US", {
+                        minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+                        maximumFractionDigits: 2,
+                      })}`,
                       "Total Amount",
                     ]}
                     labelFormatter={(label: string, payload: any) => {
@@ -720,7 +807,10 @@ export function ProcurementOverview({
                     tickLine={false}
                     axisLine={false}
                     tickFormatter={(value) =>
-                      `${(value / 1000).toLocaleString()}k`
+                      `${(value / 1000).toLocaleString("en-US", {
+                        minimumFractionDigits: (value / 1000) % 1 === 0 ? 0 : 2,
+                        maximumFractionDigits: 2,
+                      })}k`
                     }
                   />
                   <Tooltip
@@ -733,7 +823,8 @@ export function ProcurementOverview({
                       fontSize: "14px",
                       lineHeight: "1.5",
                       fontFamily: "inherit",
-                      boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+                      boxShadow:
+                        "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
                     }}
                     labelStyle={{
                       fontWeight: 700,
@@ -749,7 +840,10 @@ export function ProcurementOverview({
                       padding: "0px",
                     }}
                     formatter={(value: number) => [
-                      `${value.toLocaleString()}`,
+                      `${value.toLocaleString("en-US", {
+                        minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+                        maximumFractionDigits: 2,
+                      })}`,
                       "Total Amount",
                     ]}
                   />
@@ -815,7 +909,11 @@ export function ProcurementOverview({
                           {supplier.name}
                         </td>
                         <td className="px-4 py-1.5 text-gray-600 border-r border-gray-200 text-right">
-                          {supplier.totalAmount.toLocaleString()}
+                          {supplier.totalAmount.toLocaleString("en-US", {
+                            minimumFractionDigits:
+                              supplier.totalAmount % 1 === 0 ? 0 : 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                         <td className="px-4 py-1.5 text-center">
                           <button
@@ -842,10 +940,11 @@ export function ProcurementOverview({
                     <button
                       onClick={() => setCurrentPage(1)}
                       disabled={currentPage === 1}
-                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${currentPage === 1
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                        }`}
+                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${
+                        currentPage === 1
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      }`}
                       title="First Page"
                     >
                       <ChevronFirst size={16} />
@@ -855,10 +954,11 @@ export function ProcurementOverview({
                         setCurrentPage((prev) => Math.max(prev - 1, 1))
                       }
                       disabled={currentPage === 1}
-                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${currentPage === 1
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                        }`}
+                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${
+                        currentPage === 1
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      }`}
                       title="Previous Page"
                     >
                       <ChevronLeft size={16} />
@@ -892,10 +992,11 @@ export function ProcurementOverview({
                           <button
                             key={pageNum}
                             onClick={() => setCurrentPage(pageNum)}
-                            className={`px-3 py-1 text-sm rounded-md transition-colors ${currentPage === pageNum
-                              ? "bg-blue-500 text-white"
-                              : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                              }`}
+                            className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                              currentPage === pageNum
+                                ? "bg-blue-500 text-white"
+                                : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                            }`}
                             title={`Page ${pageNum}`}
                           >
                             {pageNum}
@@ -917,11 +1018,12 @@ export function ProcurementOverview({
                         currentPage ===
                         Math.ceil(supplierData.length / itemsPerPage)
                       }
-                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${currentPage ===
+                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${
+                        currentPage ===
                         Math.ceil(supplierData.length / itemsPerPage)
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                        }`}
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      }`}
                       title="Next Page"
                     >
                       <ChevronRight size={16} />
@@ -936,11 +1038,12 @@ export function ProcurementOverview({
                         currentPage ===
                         Math.ceil(supplierData.length / itemsPerPage)
                       }
-                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${currentPage ===
+                      className={`px-2 py-1 text-sm rounded-md transition-colors flex items-center justify-center ${
+                        currentPage ===
                         Math.ceil(supplierData.length / itemsPerPage)
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                        }`}
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      }`}
                       title="Last Page"
                     >
                       <ChevronLast size={16} />
@@ -1005,8 +1108,8 @@ export function ProcurementOverview({
                               <p className="text-sm text-gray-500">
                                 {po.date
                                   ? new Date(po.date)
-                                    .toISOString()
-                                    .split("T")[0]
+                                      .toISOString()
+                                      .split("T")[0]
                                   : "No date"}
                               </p>
                             </div>
@@ -1015,7 +1118,11 @@ export function ProcurementOverview({
                                 Total Amount (Incl. VAT)
                               </p>
                               <p className="text-lg font-bold text-gray-900">
-                                {po.totalAmount.toLocaleString()}
+                                {po.totalAmount.toLocaleString("en-US", {
+                                  minimumFractionDigits:
+                                    po.totalAmount % 1 === 0 ? 0 : 2,
+                                  maximumFractionDigits: 2,
+                                })}
                               </p>
                             </div>
                           </div>
@@ -1060,12 +1167,13 @@ export function ProcurementOverview({
                                           style={{ width: "15%" }}
                                         >
                                           <span
-                                            className={`px-2 py-1 rounded-full text-xs font-medium inline-block ${item.category === "Service"
-                                              ? "bg-green-100 text-green-700"
-                                              : item.category === "Material"
-                                                ? "bg-blue-100 text-blue-700"
-                                                : "bg-gray-100 text-gray-700"
-                                              }`}
+                                            className={`px-2 py-1 rounded-full text-xs font-medium inline-block ${
+                                              item.category === "Service"
+                                                ? "bg-green-100 text-green-700"
+                                                : item.category === "Material"
+                                                  ? "bg-blue-100 text-blue-700"
+                                                  : "bg-gray-100 text-gray-700"
+                                            }`}
                                           >
                                             {item.category}
                                           </span>
@@ -1080,7 +1188,11 @@ export function ProcurementOverview({
                                           className="px-3 py-2 text-right font-normal text-gray-900"
                                           style={{ width: "15%" }}
                                         >
-                                          {item.amount.toLocaleString()}
+                                          {item.amount.toLocaleString("en-US", {
+                                            minimumFractionDigits:
+                                              item.amount % 1 === 0 ? 0 : 2,
+                                            maximumFractionDigits: 2,
+                                          })}
                                         </td>
                                       </tr>
                                     ),

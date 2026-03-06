@@ -13,7 +13,7 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { Calendar } from "lucide-react";
+import { Calendar, AlertCircle } from "lucide-react";
 import {
   getTab1Data,
   getProcurementLineData,
@@ -26,14 +26,6 @@ type MonthlySpend = {
   year: string;
   date: Date;
   actual: number | null;
-  forecast: number | null;
-};
-
-type MonthlyDemand = {
-  month: string;
-  year: string;
-  date: Date;
-  demand: number | null;
   forecast: number | null;
 };
 
@@ -51,16 +43,17 @@ type ProcurementLineData = {
   totalAmount: number;
 } & Record<string, number | undefined>;
 
-type CategoryForecast = {
+interface ProjectBurnRateData {
   month: string;
   year: string;
+  monthLabel: string;
+  yearLabel: string;
   date: Date;
-  category: string;
-  actualQuantity: number | null;
-  forecastQuantity: number | null;
-  actualAmount: number | null;
-  forecastAmount: number | null;
-};
+  monthly_spend: number;
+  cumulative_spend: number;
+  budget: number;
+  project: string;
+}
 
 // Month name mapping for tooltips (moved outside component to avoid recreation)
 const MONTH_MAP: { [key: string]: string } = {
@@ -93,98 +86,187 @@ const MONTHS = [
   "Dec",
 ];
 
+// Reusable helper function for parsing numeric values from Google Sheets
+function parseNumber(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  const clean =
+    typeof value === "string"
+      ? value.replace(/,/g, "").trim()
+      : String(value).trim();
+  const parsed = parseFloat(clean);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+// Reusable helper function for winsorization using IQR method
+function winsorizeSeries(values: number[]): number[] {
+  if (values.length < 12) return values; // Not enough data for meaningful winsorization
+
+  const sortedValues = [...values].sort((a, b) => a - b);
+  const q1Index = Math.floor(sortedValues.length * 0.25);
+  const q3Index = Math.floor(sortedValues.length * 0.75);
+  const q1 = sortedValues[q1Index];
+  const q3 = sortedValues[q3Index];
+  const iqr = q3 - q1;
+
+  const lowerBound = q1 - 1.5 * iqr;
+  const upperBound = q3 + 1.5 * iqr;
+
+  // Cap extreme values instead of removing them
+  return values.map((v) => Math.min(Math.max(v, lowerBound), upperBound));
+}
+
+// Reusable helper function for calculating seasonal factors
+function calculateSeasonalFactors(
+  series: { month: string; value: number }[],
+): Record<string, number> {
+  if (series.length < 24) {
+    // Return neutral factors for insufficient data - need at least 2 years for seasonal patterns
+    const factors: Record<string, number> = {};
+    MONTHS.forEach((m) => {
+      factors[m] = 1.0;
+    });
+    return factors;
+  }
+
+  // Compute 6-month moving averages
+  const movingAverages: number[] = [];
+  for (let i = 5; i < series.length; i++) {
+    const window = series.slice(i - 6, i).map((d) => d.value);
+    const ma = window.reduce((sum, val) => sum + val, 0) / 6;
+    movingAverages.push(ma);
+  }
+
+  // Calculate seasonal ratios: actual / movingAverage
+  const monthlyRatios: Record<string, number[]> = {};
+  series.forEach((d, index) => {
+    if (index >= 5 && index < series.length && movingAverages[index - 5] > 0) {
+      const month = d.month;
+      const actual = d.value;
+      const ratio = actual / movingAverages[index - 5];
+
+      if (!monthlyRatios[month]) {
+        monthlyRatios[month] = [];
+      }
+      monthlyRatios[month].push(ratio);
+    }
+  });
+
+  // Average ratios per month to obtain seasonal factor
+  const seasonalFactors: Record<string, number> = {};
+  MONTHS.forEach((month) => {
+    const ratios = monthlyRatios[month] || [];
+    if (ratios.length > 0) {
+      seasonalFactors[month] =
+        ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
+    } else {
+      seasonalFactors[month] = 1.0;
+    }
+  });
+
+  // Normalize seasonal factors so that the sum equals 12
+  const sumOfFactors = Object.values(seasonalFactors).reduce(
+    (sum, factor) => sum + factor,
+    0,
+  );
+  if (sumOfFactors > 0) {
+    Object.keys(seasonalFactors).forEach((month) => {
+      seasonalFactors[month] = (seasonalFactors[month] * 12) / sumOfFactors;
+    });
+  }
+
+  // Clamp factors between 0.5 and 1.5
+  Object.keys(seasonalFactors).forEach((month) => {
+    seasonalFactors[month] = Math.max(
+      0.5,
+      Math.min(1.5, seasonalFactors[month]),
+    );
+  });
+
+  return seasonalFactors;
+}
+
+// ============================================================================
+// RECOMMENDED FILE STRUCTURE IMPROVEMENTS
+// ============================================================================
+//
+// The following utilities could be extracted into separate modules:
+//
+// 1. forecastUtils.ts:
+//    - forecastWeightedMovingAverage
+//    - calculateTrendSlope
+//    - winsorizeSeries
+//    - calculateSeasonalFactors
+//
+// 2. dataTransform.ts:
+//    - transformProcurementLineData
+//    - transformSheetData
+//    - transformCategoryData
+//    - transformProjectBurnRateData
+//    - parseNumber
+//
+// 3. statistics.ts:
+//    - calculateMAPE
+//    - calculateRMSE
+//    - validateSpendingData
+//    - generateHistoricalOptions
+//
+// 4. categorization.ts:
+//    - CATEGORY_RULES
+//    - categorizeItemCode
+//
+// This would improve maintainability and make the main component more focused.
+// ============================================================================
+
+// Configuration-based item code categorization for better maintainability
+const CATEGORY_RULES: Record<string, string[]> = {
+  CCTV: ["CAMERA", "DVR", "NVR", "P-CAMERA", "P-NVR"],
+  Storage: ["HDD", "SSD"],
+  Network: ["SWITCH", "P-SWITCH", "LAN", "SFP"],
+  "Power & Electrical": ["POWER", "POWERSUP", "THW", "VCT", "NYY"],
+  "Installation Material": ["ACCS", "BNC", "CLAMP"],
+  "Office Supply": ["TONER"],
+  "IT Device": ["P-PHONE", "P-IPAD", "SERVER"],
+  Software: ["P-SOFTWARE"],
+  "Service Operation": ["SVSUB"],
+  "Other Expense": ["SVOTHER"],
+  Finance: ["SV150100"],
+};
+
 // Function to categorize Item Codes based on procurement patterns
 const categorizeItemCode = (code: string): string => {
   if (!code) return "Uncategorized";
 
   const upperCode = code.toUpperCase();
 
-  // CCTV
-  if (
-    upperCode.startsWith("CAMERA") ||
-    upperCode.startsWith("DVR") ||
-    upperCode.startsWith("NVR") ||
-    upperCode.startsWith("P-CAMERA") ||
-    upperCode.startsWith("P-NVR")
-  ) {
-    return "CCTV";
-  }
-
-  // Storage
-  if (upperCode.startsWith("HDD") || upperCode.startsWith("SSD")) {
-    return "Storage";
-  }
-
-  // Network
-  if (
-    upperCode.startsWith("SWITCH") ||
-    upperCode.startsWith("P-SWITCH") ||
-    upperCode.startsWith("LAN") ||
-    upperCode.startsWith("SFP")
-  ) {
-    return "Network";
-  }
-
-  // Power & Electrical
-  if (
-    upperCode.startsWith("POWER") ||
-    upperCode.startsWith("POWERSUP") ||
-    upperCode.startsWith("THW") ||
-    upperCode.startsWith("VCT") ||
-    upperCode.startsWith("NYY")
-  ) {
-    return "Power & Electrical";
-  }
-
-  // Installation Material
-  if (
-    upperCode.startsWith("ACCS") ||
-    upperCode.startsWith("BNC") ||
-    upperCode.startsWith("CLAMP")
-  ) {
-    return "Installation Material";
-  }
-
-  // Office Supply
-  if (upperCode.startsWith("TONER")) {
-    return "Office Supply";
-  }
-
-  // IT Device
-  if (
-    upperCode.startsWith("P-PHONE") ||
-    upperCode.startsWith("P-IPAD") ||
-    upperCode.startsWith("SERVER")
-  ) {
-    return "IT Device";
-  }
-
-  // Software
-  if (upperCode.startsWith("P-SOFTWARE")) {
-    return "Software";
-  }
-
-  // Service Operation
-  if (upperCode.startsWith("SVSUB")) {
-    return "Service Operation";
-  }
-
-  // Other Expense
-  if (upperCode.startsWith("SVOTHER")) {
-    return "Other Expense";
-  }
-
-  // Finance
-  if (upperCode.startsWith("SV150100")) {
-    return "Finance";
+  // Loop through category rules for efficient matching
+  for (const [category, prefixes] of Object.entries(CATEGORY_RULES)) {
+    if (prefixes.some((prefix) => upperCode.startsWith(prefix))) {
+      return category;
+    }
   }
 
   return "Uncategorized";
 };
+// DATA TRANSFORMATION FUNCTIONS
+// ============================================================================
 
-// Transform procurement line data for forecasting
+interface SheetDataRow {
+  Date?: string;
+  "Total Amount"?: string | number;
+  [key: string]: any;
+}
+
+interface LineDataRow {
+  Date?: string;
+  "Item Code"?: string;
+  Quantity?: string | number;
+  "Total Amount"?: string | number;
+  [key: string]: any;
+}
+
+// Transform procurement line data to forecast format
 const transformProcurementLineData = (
-  lineData: any[],
+  lineData: LineDataRow[],
 ): ProcurementLineData[] => {
   // Group by month-year and category
   const monthlyCategoryData = lineData.reduce(
@@ -194,14 +276,15 @@ const transformProcurementLineData = (
     ) => {
       const dateStr = row.Date;
       const itemCode = row["Item Code"] || "";
-      const quantity = parseFloat(row.Quantity || 0);
-      const amount = parseFloat(row["Total Amount"] || 0);
 
-      if (!dateStr || isNaN(quantity) || isNaN(amount)) return acc;
+      const quantity = parseNumber(row.Quantity);
+      const amount = parseNumber(row["Total Amount"]);
 
-      const date = new Date(dateStr);
+      if (!dateStr) return acc;
+
+      const date = new Date(`${dateStr}T00:00:00`);
       const year = date.getFullYear().toString();
-      const month = date.toLocaleString("en-US", { month: "short" });
+      const month = MONTHS[date.getMonth()];
       const monthYearKey = `${year}-${month}`;
 
       const category = categorizeItemCode(itemCode);
@@ -231,8 +314,8 @@ const transformProcurementLineData = (
     const [year1, month1] = a[0].split("-");
     const [year2, month2] = b[0].split("-");
 
-    const date1 = new Date(`${month1} 1, ${year1}`);
-    const date2 = new Date(`${month2} 1, ${year2}`);
+    const date1 = createMonthDate(year1, month1);
+    const date2 = createMonthDate(year2, month2);
 
     return date1.getTime() - date2.getTime();
   });
@@ -242,8 +325,8 @@ const transformProcurementLineData = (
   const [lastYear, lastMonth] =
     monthEntries[monthEntries.length - 1][0].split("-");
 
-  const firstMonthIndex = MONTHS.indexOf(firstMonth);
-  const lastMonthIndex = MONTHS.indexOf(lastMonth);
+  const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
+  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
   const result: ProcurementLineData[] = [];
   let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
@@ -264,9 +347,9 @@ const transformProcurementLineData = (
       totalAmount += data.amount;
     });
 
-    const monthData: Record<string, number | undefined> = {
-      month: currentDate.getTime(), // Use timestamp as key
-      year: currentDate.getTime(), // Use timestamp as key
+    const monthData: Record<string, number | string | undefined> = {
+      month: month,
+      year: year,
       date: new Date(currentDate).getTime(),
       totalQuantity,
       totalAmount,
@@ -277,12 +360,7 @@ const transformProcurementLineData = (
       monthData[category] = data.amount;
     });
 
-    // Add month and year as separate properties
-    const finalData = monthData as ProcurementLineData;
-    (finalData as any).month = month;
-    (finalData as any).year = year;
-
-    result.push(finalData);
+    result.push(monthData as ProcurementLineData);
 
     // Move to next month
     currentDate.setMonth(currentDate.getMonth() + 1);
@@ -290,7 +368,153 @@ const transformProcurementLineData = (
 
   return result;
 };
-// Generate monthly expense forecast using weighted moving average
+
+// ============================================================================
+// FORECAST UTILITIES
+// ============================================================================
+
+// Calculate trend slope using linear regression for stable trend estimation
+const calculateTrendSlope = (values: number[]): number => {
+  if (values.length < 2) return 0;
+
+  const n = values.length;
+  const x = Array.from({ length: n }, (_, i) => i);
+  const y = values;
+
+  // Calculate means
+  const xMean = x.reduce((sum, val) => sum + val, 0) / n;
+  const yMean = y.reduce((sum, val) => sum + val, 0) / n;
+
+  // Calculate covariance and variance
+  let covariance = 0;
+  let variance = 0;
+
+  for (let i = 0; i < n; i++) {
+    const xDiff = x[i] - xMean;
+    const yDiff = y[i] - yMean;
+    covariance += xDiff * yDiff;
+    variance += xDiff * xDiff;
+  }
+
+  // Prevent division by zero
+  if (variance === 0) return 0;
+
+  const slope = covariance / variance;
+
+  // Prevent extreme trend amplification
+  const historicalMean = yMean;
+  const maxSlope = historicalMean * 0.2;
+
+  return Math.max(-maxSlope, Math.min(maxSlope, slope));
+};
+
+// Shared forecasting utility function for consistent model across the system
+interface ForecastOptions {
+  horizon?: number;
+  seasonalFactors?: Record<string, number>;
+  lastMonth?: string;
+  lastYear?: number;
+  enableSeasonality?: boolean;
+}
+
+const forecastWeightedMovingAverage = (
+  data: number[],
+  options: ForecastOptions = {},
+): number[] => {
+  const {
+    horizon = 6,
+    seasonalFactors = {},
+    lastMonth = "Dec",
+    lastYear = new Date().getFullYear(),
+    enableSeasonality = true,
+  } = options;
+
+  // Sanitize input data to remove invalid values
+  const cleanData = data.filter((v) => Number.isFinite(v) && v >= 0);
+
+  if (cleanData.length < 6) {
+    // Fallback to simple growth for insufficient data
+    const lastValue =
+      cleanData.length > 0
+        ? Math.max(...cleanData.filter((v) => !isNaN(v) && v > 0))
+        : 100000;
+    const growthRate = 0.05; // 5% default growth
+    const forecasts: number[] = [];
+
+    for (let i = 1; i <= horizon; i++) {
+      const forecastValue = lastValue * Math.pow(1 + growthRate, i);
+      forecasts.push(
+        Math.max(0, !isNaN(forecastValue) ? forecastValue : lastValue),
+      );
+    }
+
+    return forecasts;
+  }
+
+  const weights = [0.3, 0.25, 0.2, 0.15, 0.07, 0.03];
+  const forecasts: number[] = [];
+  let rollingWindow = [...cleanData];
+
+  for (let i = 1; i <= horizon; i++) {
+    const windowValues = rollingWindow.slice(-6);
+
+    if (windowValues.length < 6) break;
+
+    // Apply 6-month weighted moving average
+    const baseForecast = weights.reduce(
+      (sum, weight, j) =>
+        sum + windowValues[windowValues.length - 1 - j] * weight,
+      0,
+    );
+
+    // Add trend adjustment using linear regression slope
+    const trendSlope = calculateTrendSlope(windowValues);
+    const trendAdjustedForecast = baseForecast + trendSlope * 0.3;
+
+    // Apply seasonal factor only if enabled and sufficient data
+    let seasonalFactor = 1.0;
+    if (enableSeasonality) {
+      const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
+      const forecastMonthIndex = (lastMonthIndex + i) % 12;
+      const forecastMonth = MONTHS[forecastMonthIndex];
+
+      // Get seasonal factor with bounds checking
+      const rawSeasonalFactor = seasonalFactors[forecastMonth] || 1.0;
+      seasonalFactor = Math.max(0.5, Math.min(1.5, rawSeasonalFactor));
+    }
+
+    const seasonalForecast = trendAdjustedForecast * seasonalFactor;
+
+    // Clamp extreme spikes and ensure non-negative values
+    const historicalAvg =
+      cleanData.reduce((sum, val) => sum + (isNaN(val) ? 0 : val), 0) /
+      cleanData.length;
+    const clampedForecast = Math.max(
+      0,
+      seasonalForecast > historicalAvg * 2
+        ? historicalAvg * 1.8
+        : seasonalForecast,
+    );
+
+    const forecastValue = Math.max(
+      0,
+      Math.round(!isNaN(clampedForecast) ? clampedForecast : historicalAvg),
+    );
+
+    // Ensure forecast value is finite before pushing
+    const safeForecastValue = Number.isFinite(forecastValue)
+      ? forecastValue
+      : 0;
+    forecasts.push(safeForecastValue);
+
+    // Add forecast to rolling window for next iteration
+    rollingWindow.push(safeForecastValue);
+  }
+
+  return forecasts;
+};
+
+// Generate monthly expense forecast using shared weighted moving average
 const generateMonthlyExpenseForecast = (
   historicalData: ProcurementLineData[],
 ): ProcurementLineData[] => {
@@ -299,84 +523,69 @@ const generateMonthlyExpenseForecast = (
 
   if (values.length < 3) {
     const lastValue = values.length > 0 ? Math.max(...values) : 100000;
+    const firstValue =
+      values.length > 1 ? Math.min(...values.filter((v) => v > 0)) : lastValue;
+    const n = values.length > 1 ? values.length - 1 : 1;
 
-    // Generate 3 months of fallback forecast
+    // Calculate CAGR: (last/first)^(1/n) - 1
+    const cagr =
+      firstValue > 0 ? Math.pow(lastValue / firstValue, 1 / n) - 1 : 0.05;
+    const growthRate = Math.max(0.01, Math.min(0.5, cagr)); // Clamp between 1% and 50%
+
+    // Generate 6 months of CAGR-based fallback forecast (updated from 3)
     const lastYear = Number(
       historicalData[historicalData.length - 1]?.year ||
         new Date().getFullYear(),
     );
     const lastMonth = historicalData[historicalData.length - 1]?.month || "Dec";
-    const lastMonthIndex = MONTHS.indexOf(lastMonth);
+    const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
-    return [
-      {
-        month: MONTHS[(lastMonthIndex + 1) % 12],
-        year: (lastMonthIndex === 11 ? lastYear + 1 : lastYear).toString(),
-        date: new Date(
-          lastMonthIndex === 11 ? lastYear + 1 : lastYear,
-          (lastMonthIndex + 1) % 12,
-          1,
-        ).getTime(),
+    const fallbackForecast = [];
+    for (let i = 1; i <= 6; i++) {
+      const forecastValue = lastValue * Math.pow(1 + growthRate, i);
+      const monthIndex = (lastMonthIndex + i) % 12;
+      const yearOffset = Math.floor((lastMonthIndex + i) / 12);
+      const forecastYear = (lastYear + yearOffset).toString();
+
+      fallbackForecast.push({
+        month: MONTHS[monthIndex],
+        year: forecastYear,
+        date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
         totalQuantity: 0,
-        totalAmount: lastValue * 1.05,
-      } as any,
-      {
-        month: MONTHS[(lastMonthIndex + 2) % 12],
-        year: (lastMonthIndex >= 10 ? lastYear + 1 : lastYear).toString(),
-        date: new Date(
-          lastMonthIndex >= 10 ? lastYear + 1 : lastYear,
-          (lastMonthIndex + 2) % 12,
-          1,
-        ).getTime(),
-        totalQuantity: 0,
-        totalAmount: lastValue * 1.07,
-      } as any,
-      {
-        month: MONTHS[(lastMonthIndex + 3) % 12],
-        year: (lastMonthIndex >= 9 ? lastYear + 1 : lastYear).toString(),
-        date: new Date(
-          lastMonthIndex >= 9 ? lastYear + 1 : lastYear,
-          (lastMonthIndex + 3) % 12,
-          1,
-        ).getTime(),
-        totalQuantity: 0,
-        totalAmount: lastValue * 1.09,
-      } as any,
-    ];
-  }
-
-  // Generate forecast for next 3 months using weighted moving average
-  const forecastData: ProcurementLineData[] = [];
-  const lastYear = Number(historicalData[historicalData.length - 1].year);
-  const lastMonth = historicalData[historicalData.length - 1].month;
-  const lastMonthIndex = MONTHS.indexOf(lastMonth);
-
-  // Use rolling historical window
-  let rollingValues = [...values];
-
-  for (let i = 1; i <= 3; i++) {
-    const lastThreeValues = rollingValues.slice(-3);
-
-    // Apply weighted moving average: 0.5 * last + 0.3 * second + 0.2 * third
-    let weightedAverage = 0;
-    if (lastThreeValues.length === 3) {
-      weightedAverage =
-        0.5 * lastThreeValues[2] + // last month
-        0.3 * lastThreeValues[1] + // second month
-        0.2 * lastThreeValues[0]; // third month
-    } else if (lastThreeValues.length === 2) {
-      weightedAverage =
-        0.7 * lastThreeValues[1] + // last month
-        0.3 * lastThreeValues[0]; // second month
-    } else {
-      weightedAverage = lastThreeValues[0]; // only one value available
+        totalAmount: Math.round(forecastValue),
+      } as any);
     }
 
-    const forecastValue = Math.max(Math.round(weightedAverage), 0);
+    return fallbackForecast;
+  }
 
-    let monthIndex = (lastMonthIndex + i) % 12;
-    let yearOffset = Math.floor((lastMonthIndex + i) / 12);
-    let forecastYear = (lastYear + yearOffset).toString();
+  // Use shared forecasting utility for consistent model with seasonal factors
+  const lastYear = Number(historicalData[historicalData.length - 1].year);
+  const lastMonth = historicalData[historicalData.length - 1].month;
+
+  // Calculate seasonal factors using shared helper
+  const seriesData = historicalData.map((d) => ({
+    month: d.month,
+    value: d.totalAmount || 0,
+  }));
+  const seasonalFactors = calculateSeasonalFactors(seriesData);
+
+  const forecasts = forecastWeightedMovingAverage(values, {
+    horizon: 6,
+    seasonalFactors,
+    lastMonth,
+    lastYear,
+    enableSeasonality: historicalData.length >= 24,
+  });
+
+  // Convert forecasts back to ProcurementLineData format
+  const forecastData: ProcurementLineData[] = [];
+  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
+
+  forecasts.forEach((forecastValue, i) => {
+    const monthIndex = (lastMonthIndex + i + 1) % 12;
+    const yearOffset = Math.floor((lastMonthIndex + i + 1) / 12);
+    const forecastYear = (lastYear + yearOffset).toString();
 
     forecastData.push({
       month: MONTHS[monthIndex],
@@ -385,72 +594,6 @@ const generateMonthlyExpenseForecast = (
       totalQuantity: 0,
       totalAmount: forecastValue,
     } as any);
-
-    // Update rolling values
-    rollingValues = [...rollingValues.slice(-3), forecastValue];
-  }
-
-  return forecastData;
-};
-
-// Generate category demand forecast
-const generateCategoryDemandForecast = (
-  historicalData: ProcurementLineData[],
-  categories: string[],
-): CategoryForecast[] => {
-  const forecastData: CategoryForecast[] = [];
-
-  categories.forEach((category) => {
-    // Extract historical amounts for this category
-    const values = historicalData.map((d) => d[category] || 0);
-
-    if (values.length < 3) return; // Skip if insufficient data
-
-    const lastYear = Number(historicalData[historicalData.length - 1].year);
-    const lastMonth = historicalData[historicalData.length - 1].month;
-    const lastMonthIndex = MONTHS.indexOf(lastMonth);
-
-    // Use rolling historical window
-    let rollingValues = [...values];
-
-    for (let i = 1; i <= 3; i++) {
-      const lastThreeValues = rollingValues.slice(-3);
-
-      // Apply weighted moving average
-      let weightedAverage = 0;
-      if (lastThreeValues.length === 3) {
-        weightedAverage =
-          0.5 * lastThreeValues[2] + // last month
-          0.3 * lastThreeValues[1] + // second month
-          0.2 * lastThreeValues[0]; // third month
-      } else if (lastThreeValues.length === 2) {
-        weightedAverage =
-          0.7 * lastThreeValues[1] + // last month
-          0.3 * lastThreeValues[0]; // second month
-      } else {
-        weightedAverage = lastThreeValues[0];
-      }
-
-      const forecastValue = Math.max(Math.round(weightedAverage), 0);
-
-      let monthIndex = (lastMonthIndex + i) % 12;
-      let yearOffset = Math.floor((lastMonthIndex + i) / 12);
-      let forecastYear = (lastYear + yearOffset).toString();
-
-      forecastData.push({
-        month: MONTHS[monthIndex],
-        year: forecastYear,
-        date: new Date(parseInt(forecastYear), monthIndex, 1),
-        category,
-        actualQuantity: null,
-        forecastQuantity: Math.round(forecastValue / 1000), // Rough quantity estimate
-        actualAmount: null,
-        forecastAmount: forecastValue,
-      });
-
-      // Update rolling values
-      rollingValues = [...rollingValues.slice(-3), forecastValue];
-    }
   });
 
   return forecastData;
@@ -467,21 +610,143 @@ const validateSpendingData = (data: any[]) => {
   );
 };
 
+// Transform project-wise burn rate data (cumulative spend vs budget)
+const transformProjectBurnRateData = (
+  sheetData: any[],
+  selectedProject: string,
+): ProjectBurnRateData[] => {
+  const monthGroups: Record<string, any> = {};
+
+  // Debug metrics
+  const totalRows = sheetData.length;
+  let totalAmountBefore = 0;
+
+  sheetData.forEach((row) => {
+    // 1. Parse Total Amount: remove commas and whitespace
+    const amountStrRaw = String(row["Total Amount"] || "0");
+    const amountStrClean = amountStrRaw.replace(/,/g, "").trim();
+    const amount = parseFloat(amountStrClean);
+
+    // 2. Handle Date parsing and conversion
+    const dateStr = row.Date;
+    if (!dateStr || isNaN(amount) || amount <= 0) return;
+
+    totalAmountBefore += amount;
+
+    let date: Date;
+    if (typeof dateStr === "string" && dateStr.includes("-")) {
+      const parts = dateStr.split("-");
+      if (parts.length === 3) {
+        let year = parseInt(parts[0]);
+        const month = parseInt(parts[1]) - 1;
+        const day = parseInt(parts[2]);
+        if (year > 2400) year -= 543; // Buddhist to Gregorian
+        date = new Date(year, month, day);
+      } else {
+        date = new Date(`${dateStr}T00:00:00`);
+      }
+    } else {
+      date = new Date(`${dateStr}T00:00:00`);
+      if (date && date.getFullYear() > 2400) {
+        date.setFullYear(date.getFullYear() - 543);
+      }
+    }
+
+    if (!date || isNaN(date.getTime())) return;
+
+    const year = date.getFullYear().toString();
+    const displayYear = (date.getFullYear() + 543).toString();
+    const month = MONTHS[date.getMonth()];
+    const monthYearKey = `${year}-${month}`;
+
+    // 3. Grouping by month
+    if (!monthGroups[monthYearKey]) {
+      monthGroups[monthYearKey] = {
+        month,
+        year: displayYear,
+        date: new Date(date.getFullYear(), date.getMonth(), 1),
+        monthly_spend: 0,
+      };
+    }
+    monthGroups[monthYearKey].monthly_spend += amount;
+  });
+
+  // Log debug information
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[DEBUG_BURN_RATE] Project: ${selectedProject}
+      - Total Rows: ${totalRows}
+      - Total Amount: ${totalAmountBefore.toLocaleString()}`);
+  }
+
+  const sortedMonths = Object.values(monthGroups).sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
+
+  const result: ProjectBurnRateData[] = [];
+  let cumulative = 0;
+
+  // Calculate budget from sheet data or fallback
+  const totalProjectSpend = sortedMonths.reduce(
+    (sum, d) => sum + d.monthly_spend,
+    0,
+  );
+
+  // Extract budget from sheet data if available
+  let budgetValue = 0;
+  if (sheetData.length > 0) {
+    const firstRow = sheetData[0];
+
+    budgetValue =
+      parseNumber(firstRow["Budget"]) ||
+      parseNumber(firstRow["Project Budget"]) ||
+      parseNumber(firstRow.Budget) ||
+      0;
+  }
+
+  // Fallback budget only when no budget exists in dataset
+  const fallbackBudget =
+    Math.ceil((totalProjectSpend * 1.05) / 100000) * 100000;
+  const mockBudget = budgetValue > 0 ? budgetValue : fallbackBudget;
+
+  sortedMonths.forEach((d) => {
+    // Cumulative = running total across months
+    cumulative += d.monthly_spend;
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        `[CUMULATIVE_DEBUG] ${d.month} ${d.year}: Monthly Spend = ${d.monthly_spend.toLocaleString()}, Cumulative = ${cumulative.toLocaleString()}`,
+      );
+    }
+    result.push({
+      month: d.month,
+      year: d.year,
+      monthLabel: d.month,
+      yearLabel: d.year,
+      date: d.date,
+      monthly_spend: d.monthly_spend,
+      cumulative_spend: cumulative,
+      budget: mockBudget,
+      project: selectedProject,
+    });
+  });
+
+  return result;
+};
+
 // Transform Google Sheets data to forecast format
-const transformSheetData = (sheetData: any[]) => {
+const transformSheetData = (sheetData: SheetDataRow[]) => {
   // Group by month-year and sum amounts from procurement_head table
   const monthlyData = sheetData.reduce((acc: Record<string, number>, row) => {
     // Strictly use procurement_head.Date and procurement_head.Total Amount
     const dateStr = row.Date;
     if (!dateStr) return acc;
 
-    const date = new Date(dateStr);
+    const date = new Date(`${dateStr}T00:00:00`);
     const year = date.getFullYear().toString();
-    const month = date.toLocaleString("en-US", { month: "short" });
+    const month = MONTHS[date.getMonth()];
     const monthYearKey = `${year}-${month}`;
 
-    // Strictly use procurement_head.Total Amount
-    const amount = parseFloat(row["Total Amount"] || 0);
+    // Fix numeric parsing bug with commas
+    const amount = parseNumber(row["Total Amount"]);
 
     // Add validation against invalid values
     if (isNaN(amount) || amount <= 0) return acc;
@@ -501,8 +766,8 @@ const transformSheetData = (sheetData: any[]) => {
     const [year1, month1] = a[0].split("-");
     const [year2, month2] = b[0].split("-");
 
-    const date1 = new Date(`${month1} 1, ${year1}`);
-    const date2 = new Date(`${month2} 1, ${year2}`);
+    const date1 = createMonthDate(year1, month1);
+    const date2 = createMonthDate(year2, month2);
 
     return date1.getTime() - date2.getTime();
   });
@@ -512,22 +777,8 @@ const transformSheetData = (sheetData: any[]) => {
   const [lastYear, lastMonth] =
     monthEntries[monthEntries.length - 1][0].split("-");
 
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const firstMonthIndex = months.indexOf(firstMonth);
-  const lastMonthIndex = months.indexOf(lastMonth);
+  const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
+  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
   const result: any[] = [];
   let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
@@ -535,13 +786,13 @@ const transformSheetData = (sheetData: any[]) => {
 
   while (currentDate <= endDate) {
     const year = currentDate.getFullYear().toString();
-    const month = months[currentDate.getMonth()];
+    const month = MONTHS[currentDate.getMonth()];
     const monthYearKey = `${year}-${month}`;
 
     result.push({
       month,
       year,
-      date: new Date(currentDate),
+      date: new Date(currentDate).getTime(),
       actual: monthlyData[monthYearKey] || 0,
       forecast: null,
     });
@@ -555,345 +806,337 @@ const transformSheetData = (sheetData: any[]) => {
 
 // Generate historical data options from real data
 const generateHistoricalOptions = (allData: MonthlySpend[]) => {
-  console.log("Debug - All data length:", allData.length);
-  console.log("Debug - All data:", allData);
-
   // Clone array before sorting to avoid mutation
   const sortedData = [...allData].sort(
     (a, b) =>
-      new Date(`${a.month} ${a.year}`).getTime() -
-      new Date(`${b.month} ${b.year}`).getTime(),
+      new Date(
+        parseInt(a.year),
+        Math.max(0, MONTHS.indexOf(a.month)),
+        1,
+      ).getTime() -
+      new Date(
+        parseInt(b.year),
+        Math.max(0, MONTHS.indexOf(b.month)),
+        1,
+      ).getTime(),
   );
-
-  console.log("Debug - Sorted data:", sortedData);
 
   // Get last 12 and 18 months from all data (counting backwards from latest data)
   const last12Months = sortedData.slice(-12);
   const last18Months = sortedData.slice(-18);
 
-  console.log("Debug - Last 12 months:", last12Months);
-  console.log("Debug - Last 18 months:", last18Months);
-
   return {
     "12months": last12Months,
-    "2years": last18Months,
+    "18months": last18Months,
   };
 };
 
-// Generate forecast data using 3-month Moving Average model
-const generateMovingAverageForecast = (historicalData: any[]) => {
-  // Extract actual values without filtering zeros to maintain time series continuity
-  const values = historicalData.map((d) => Number(d.actual) || 0);
+// Generate historical data options from demand data
 
-  console.log("Moving Average Forecast - Actual values:", values);
+// ============================================================================
+// STATISTICS FUNCTIONS
+// ============================================================================
 
-  if (values.length < 3) {
-    // Fallback to simple growth if insufficient data
+// Helper functions for model accuracy evaluation using backtesting
+const calculateMAPE = (historicalData: MonthlySpend[]): number => {
+  if (historicalData.length < 8) return 0;
+
+  // Cache numeric conversions to avoid repeated parseNumber calls
+  const actualValues = historicalData.map((d) => parseNumber(d.actual));
+
+  const errors: number[] = [];
+
+  // Walk through entire dataset using rolling predictions with shared forecasting logic
+  for (let i = 6; i < historicalData.length; i++) {
+    const windowData = historicalData.slice(0, i);
+    const actualValue = actualValues[i];
+
+    if (actualValue > 0) {
+      // Extract cached values for shared forecasting
+      const windowValues = actualValues.slice(0, i);
+
+      if (windowValues.length >= 6) {
+        // Use shared forecasting utility for backtesting
+        const backtestForecasts = forecastWeightedMovingAverage(windowValues, {
+          horizon: 1,
+          enableSeasonality: false, // Disable seasonality for backtesting
+        });
+
+        if (backtestForecasts.length > 0) {
+          const backtestForecast = backtestForecasts[0];
+          const backtestTrendSlope = calculateTrendSlope(windowValues);
+          const backtestTrendAdjusted =
+            backtestForecast + backtestTrendSlope * 0.5;
+
+          const percentageError = Math.abs(
+            (actualValue - backtestTrendAdjusted) / actualValue,
+          );
+          errors.push(percentageError);
+        }
+      }
+    }
+  }
+
+  return errors.length > 0
+    ? (errors.reduce((sum, error) => sum + error, 0) / errors.length) * 100
+    : 0;
+};
+
+const calculateRMSE = (historicalData: MonthlySpend[]): number => {
+  if (historicalData.length < 8) return 0;
+
+  // Cache numeric conversions to avoid repeated parseNumber calls
+  const actualValues = historicalData.map((d) => parseNumber(d.actual));
+
+  const errors: number[] = [];
+
+  // Walk through entire dataset using rolling predictions with shared forecasting logic
+  for (let i = 6; i < historicalData.length; i++) {
+    const actualValue = actualValues[i];
+
+    // Extract cached values for shared forecasting
+    const windowValues = actualValues.slice(0, i);
+
+    if (windowValues.length >= 6) {
+      // Use shared forecasting utility for backtesting
+      const backtestForecasts = forecastWeightedMovingAverage(windowValues, {
+        horizon: 1,
+        enableSeasonality: false, // Disable seasonality for backtesting
+      });
+
+      if (backtestForecasts.length > 0) {
+        const backtestForecast = backtestForecasts[0];
+        const backtestTrendSlope = calculateTrendSlope(windowValues);
+        const backtestTrendAdjusted =
+          backtestForecast + backtestTrendSlope * 0.5;
+
+        errors.push(actualValue - backtestTrendAdjusted);
+      }
+    }
+  }
+
+  return errors.length > 0
+    ? Math.sqrt(
+        errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
+      )
+    : 0;
+};
+
+interface ForecastDataPoint {
+  month: string;
+  year: string;
+  date: number;
+  actual: number | null;
+  forecast: number | null;
+  forecast_low?: number;
+  forecast_high?: number;
+}
+
+interface CategoryForecastData {
+  month: string;
+  year: string;
+  date: number;
+  [category: string]: number | string | undefined;
+}
+
+// Helper function for creating month dates consistently
+function createMonthDate(year: string, month: string): Date {
+  return new Date(parseInt(year), Math.max(0, MONTHS.indexOf(month)), 1);
+}
+
+// Helper function for extracting category keys
+function extractCategories(item: Record<string, any>): string[] {
+  return Object.keys(item).filter(
+    (key) => key !== "month" && key !== "year" && key !== "date",
+  );
+}
+
+// Generate forecast data using 6-month weighted moving average with outlier removal
+const generateMovingAverageForecast = (
+  historicalData: MonthlySpend[],
+): ForecastDataPoint[] => {
+  // Prevent array access errors
+  if (!historicalData.length) return [];
+
+  // Extract actual values using parseNumber for safety
+  const values = historicalData.map((d) => parseNumber(d.actual));
+
+  if (process.env.NODE_ENV === "development") {
+    console.log("Moving Average Forecast - Actual values:", values);
+  }
+
+  if (values.length < 6) {
+    // Fallback to CAGR-based growth if insufficient data
     const lastValue = values.length > 0 ? Math.max(...values) : 200000;
-    console.log(
-      "Moving Average Forecast - Using fallback, lastValue:",
-      lastValue,
+    const firstValue =
+      values.length > 1 ? Math.min(...values.filter((v) => v > 0)) : lastValue;
+    const n = values.length > 1 ? values.length - 1 : 1;
+
+    // Calculate CAGR: (last/first)^(1/n) - 1
+    const cagr =
+      firstValue > 0 ? Math.pow(lastValue / firstValue, 1 / n) - 1 : 0.05;
+    const growthRate = Math.max(0.01, Math.min(0.5, cagr)); // Clamp between 1% and 50%
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("Moving Average Forecast - Using CAGR fallback:", {
+        lastValue,
+        firstValue,
+        n,
+        cagr,
+        growthRate,
+      });
+    }
+
+    // Generate 6 months of fallback forecast
+    if (!historicalData.length) return [];
+    const lastYear = Number(historicalData[historicalData.length - 1].year);
+    const lastMonth = historicalData[historicalData.length - 1].month;
+    const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
+
+    const fallbackForecast = [];
+    for (let i = 1; i <= 6; i++) {
+      const monthIndex = (lastMonthIndex + i) % 12;
+      const yearOffset = Math.floor((lastMonthIndex + i) / 12);
+      const forecastYear = (lastYear + yearOffset).toString();
+      const forecastMonth = MONTHS[monthIndex];
+
+      const forecastValue = lastValue * Math.pow(1 + growthRate, i);
+
+      fallbackForecast.push({
+        month: forecastMonth,
+        year: forecastYear,
+        date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
+        actual: null,
+        forecast: Math.max(Math.round(forecastValue), 0),
+        forecast_low: Math.max(0, Math.round(forecastValue * 0.8)),
+        forecast_high: Math.round(forecastValue * 1.2),
+      });
+    }
+
+    return fallbackForecast;
+  }
+
+  // Apply winsorization to cap extreme values while preserving time series continuity
+  let series = [...values];
+  if (values.length >= 12) {
+    series = winsorizeSeries(values);
+  }
+
+  // STEP 2: Create consistent dataset structure for seasonal calculations
+  const seriesData = historicalData.map((d) => ({
+    month: d.month,
+    value: parseNumber(d.actual),
+  }));
+
+  // Apply winsorization to values while preserving structure
+  if (values.length >= 12) {
+    const winsorizedValues = winsorizeSeries(seriesData.map((d) => d.value));
+    for (let i = 0; i < seriesData.length; i++) {
+      seriesData[i].value = winsorizedValues[i];
+    }
+  }
+
+  // Calculate seasonal factors using reusable helper
+  const seasonalFactors = calculateSeasonalFactors(seriesData);
+
+  // Calculate RMSE for confidence intervals
+  const errors: number[] = [];
+  for (let i = 6; i < seriesData.length; i++) {
+    const window = seriesData.slice(i - 6, i).map((d) => d.value);
+    const weights = [0.3, 0.25, 0.2, 0.15, 0.07, 0.03];
+    const backtestForecast = weights.reduce(
+      (sum, weight, j) => sum + window[5 - j] * weight,
+      0,
     );
 
-    return [
-      { month: "Jan", year: "2026", actual: null, forecast: lastValue * 1.05 },
-      { month: "Feb", year: "2026", actual: null, forecast: lastValue * 1.07 },
-      { month: "Mar", year: "2026", actual: null, forecast: lastValue * 1.09 },
-      { month: "Apr", year: "2026", actual: null, forecast: lastValue * 1.11 },
-      { month: "May", year: "2026", actual: null, forecast: lastValue * 1.13 },
-      { month: "Jun", year: "2026", actual: null, forecast: lastValue * 1.15 },
-    ];
+    // Add trend adjustment for backtesting using linear regression
+    const backtestTrendSlope = calculateTrendSlope(window);
+    const backtestTrendAdjusted = backtestForecast + backtestTrendSlope * 0.5;
+
+    const actualValue = seriesData[i].value;
+    errors.push(actualValue - backtestTrendAdjusted);
   }
 
-  // Generate forecast for next 12 months using 3-month moving average
-  const forecastData = [];
-  const lastYear = Number(historicalData[historicalData.length - 1].year);
-  const lastMonth = historicalData[historicalData.length - 1].month;
+  const rmse =
+    errors.length > 0
+      ? Math.sqrt(
+          errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
+        )
+      : 0;
 
-  // Find the index of the last month to continue from
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const lastMonthIndex = months.indexOf(lastMonth);
-
-  console.log("Moving Average Forecast - Starting parameters:", {
-    lastYear,
-    lastMonth,
-    lastMonthIndex,
-    initialValues: [...values],
+  // Use shared forecasting utility with full historical series
+  if (!historicalData.length) return [];
+  const enableSeasonality = historicalData.length >= 24;
+  const fullSeries = seriesData.map((d) => d.value);
+  const forecasts = forecastWeightedMovingAverage(fullSeries, {
+    horizon: 6,
+    seasonalFactors,
+    lastMonth: historicalData[historicalData.length - 1].month,
+    lastYear: Number(historicalData[historicalData.length - 1].year),
+    enableSeasonality,
   });
 
-  // Use rolling historical window instead of recursive self-feeding
-  let rollingValues = [...values]; // Start with all historical values
+  // Convert forecasts back to original format
+  if (!historicalData.length) return [];
+  const forecastData: any[] = [];
+  const lastYear = Number(historicalData[historicalData.length - 1].year);
+  const lastMonth = historicalData[historicalData.length - 1].month;
+  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
-  for (let i = 1; i <= 12; i++) {
-    // Get last 3 values from rolling window
-    const lastThreeValues = rollingValues.slice(-3);
+  forecasts.forEach((forecastValue, i) => {
+    const monthIndex = (lastMonthIndex + i + 1) % 12;
+    const yearOffset = Math.floor((lastMonthIndex + i + 1) / 12);
+    const forecastYear = (lastYear + yearOffset).toString();
+    const forecastMonth = MONTHS[monthIndex];
 
-    // Apply weighted moving average: 0.5 * last + 0.3 * second + 0.2 * third
-    let weightedAverage = 0;
-    if (lastThreeValues.length === 3) {
-      weightedAverage =
-        0.5 * lastThreeValues[2] + // last month
-        0.3 * lastThreeValues[1] + // second month
-        0.2 * lastThreeValues[0]; // third month
-    } else if (lastThreeValues.length === 2) {
-      weightedAverage =
-        0.7 * lastThreeValues[1] + // last month
-        0.3 * lastThreeValues[0]; // second month
-    } else {
-      weightedAverage = lastThreeValues[0]; // only one value available
-    }
-
-    // Clamp negative values to zero
-    const forecastValue = Math.max(Math.round(weightedAverage), 0);
-
-    // Calculate month and year dynamically
-    let monthIndex = (lastMonthIndex + i) % 12;
-    let yearOffset = Math.floor((lastMonthIndex + i) / 12);
-    let forecastYear = (lastYear + yearOffset).toString();
-
-    console.log(`Moving Average Forecast - Month ${i}:`, {
-      lastThreeValues,
-      weightedAverage,
-      forecastValue,
-      month: months[monthIndex],
-      year: forecastYear,
-    });
+    // Ensure forecast value is finite
+    const safeForecastValue = Number.isFinite(forecastValue)
+      ? forecastValue
+      : 0;
 
     forecastData.push({
-      month: months[monthIndex],
+      month: forecastMonth,
       year: forecastYear,
-      date: new Date(parseInt(forecastYear), monthIndex, 1),
+      date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
       actual: null,
-      forecast: forecastValue,
+      forecast: safeForecastValue,
+      forecast_low: Math.max(
+        0,
+        Math.round(safeForecastValue - 1.96 * rmse * Math.sqrt(i + 1)),
+      ),
+      forecast_high: Math.round(
+        safeForecastValue + 1.96 * rmse * Math.sqrt(i + 1),
+      ),
     });
+  });
 
-    // Update rolling values: add forecast but maintain only last 3 historical values for next calculation
-    rollingValues = [...rollingValues.slice(-3), forecastValue];
+  if (process.env.NODE_ENV === "development") {
+    console.log("Moving Average Forecast - Final metrics:", {
+      rmse,
+      forecastHorizon: 6,
+      outliersRemoved: series.length < values.length,
+      seasonalFactors,
+    });
   }
 
   return forecastData;
 };
 
-// Transform procurement line data to demand format using PO count
-const transformDemandData = (lineData: any[]): MonthlyDemand[] => {
-  // Group by month-year and count POs instead of summing quantities
-  const monthlyDemandData = lineData.reduce(
-    (acc: Record<string, number>, row) => {
-      const dateStr = row.Date;
-
-      if (!dateStr) return acc;
-
-      const date = new Date(dateStr);
-      const year = date.getFullYear().toString();
-      const month = date.toLocaleString("en-US", { month: "short" });
-      const monthYearKey = `${year}-${month}`;
-
-      // Count POs instead of summing quantities for unit-consistent demand metric
-      acc[monthYearKey] = (acc[monthYearKey] || 0) + 1;
-
-      return acc;
-    },
-    {},
-  );
-
-  // Convert to array format and create continuous timeline
-  const monthEntries = Object.entries(monthlyDemandData);
-  if (monthEntries.length === 0) return [];
-
-  // Sort chronologically using proper Date sorting instead of localeCompare
-  monthEntries.sort((a, b) => {
-    const [year1, month1] = a[0].split("-");
-    const [year2, month2] = b[0].split("-");
-
-    const date1 = new Date(`${month1} 1, ${year1}`);
-    const date2 = new Date(`${month2} 1, ${year2}`);
-
-    return date1.getTime() - date2.getTime();
-  });
-
-  // Create continuous monthly timeline
-  const [firstYear, firstMonth] = monthEntries[0][0].split("-");
-  const [lastYear, lastMonth] =
-    monthEntries[monthEntries.length - 1][0].split("-");
-
-  const firstMonthIndex = MONTHS.indexOf(firstMonth);
-  const lastMonthIndex = MONTHS.indexOf(lastMonth);
-
-  const result: MonthlyDemand[] = [];
-  let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
-  const endDate = new Date(parseInt(lastYear), lastMonthIndex, 1);
-
-  while (currentDate <= endDate) {
-    const year = currentDate.getFullYear().toString();
-    const month = MONTHS[currentDate.getMonth()];
-    const monthYearKey = `${year}-${month}`;
-
-    result.push({
-      month,
-      year,
-      date: new Date(currentDate),
-      demand: monthlyDemandData[monthYearKey] || 0,
-      forecast: null,
-    });
-
-    // Move to next month
-    currentDate.setMonth(currentDate.getMonth() + 1);
-  }
-
-  return result;
-};
-
-// Generate demand forecast using 3-month Weighted Moving Average model
-const generateDemandForecast = (historicalData: MonthlyDemand[]) => {
-  // Extract demand values without filtering zeros to maintain time series continuity
-  const values = historicalData.map((d) => Number(d.demand) || 0);
-
-  console.log("Demand Forecast - Actual values:", values);
-
-  if (values.length < 3) {
-    // Fallback to simple growth if insufficient data
-    const lastValue = values.length > 0 ? Math.max(...values) : 100;
-    console.log("Demand Forecast - Using fallback, lastValue:", lastValue);
-
-    return [
-      {
-        month: "Jan",
-        year: "2026",
-        date: new Date(2026, 0, 1),
-        demand: null,
-        forecast: Math.round(lastValue * 1.05),
-      },
-      {
-        month: "Feb",
-        year: "2026",
-        date: new Date(2026, 1, 1),
-        demand: null,
-        forecast: Math.round(lastValue * 1.07),
-      },
-      {
-        month: "Mar",
-        year: "2026",
-        date: new Date(2026, 2, 1),
-        demand: null,
-        forecast: Math.round(lastValue * 1.09),
-      },
-      {
-        month: "Apr",
-        year: "2026",
-        date: new Date(2026, 3, 1),
-        demand: null,
-        forecast: Math.round(lastValue * 1.11),
-      },
-      {
-        month: "May",
-        year: "2026",
-        date: new Date(2026, 4, 1),
-        demand: null,
-        forecast: Math.round(lastValue * 1.13),
-      },
-      {
-        month: "Jun",
-        year: "2026",
-        date: new Date(2026, 5, 1),
-        demand: null,
-        forecast: Math.round(lastValue * 1.15),
-      },
-    ];
-  }
-
-  // Generate forecast for next 12 months using 3-month weighted moving average
-  const forecastData: MonthlyDemand[] = [];
-  const lastYear = Number(historicalData[historicalData.length - 1].year);
-  const lastMonth = historicalData[historicalData.length - 1].month;
-
-  // Find the index of the last month to continue from
-  const lastMonthIndex = MONTHS.indexOf(lastMonth);
-
-  console.log("Demand Forecast - Starting parameters:", {
-    lastYear,
-    lastMonth,
-    lastMonthIndex,
-    initialValues: [...values],
-  });
-
-  // Use rolling historical window instead of recursive self-feeding
-  let rollingValues = [...values]; // Start with all historical values
-
-  for (let i = 1; i <= 12; i++) {
-    // Get last 3 values from rolling window
-    const lastThreeValues = rollingValues.slice(-3);
-
-    // Apply weighted moving average: 0.5 * last + 0.3 * second + 0.2 * third
-    let weightedAverage = 0;
-    if (lastThreeValues.length === 3) {
-      weightedAverage =
-        0.5 * lastThreeValues[2] + // last month
-        0.3 * lastThreeValues[1] + // second month
-        0.2 * lastThreeValues[0]; // third month
-    } else if (lastThreeValues.length === 2) {
-      weightedAverage =
-        0.7 * lastThreeValues[1] + // last month
-        0.3 * lastThreeValues[0]; // second month
-    } else {
-      weightedAverage = lastThreeValues[0]; // only one value available
-    }
-
-    // Clamp negative values to zero
-    const forecastValue = Math.max(Math.round(weightedAverage), 0);
-
-    // Calculate month and year dynamically
-    let monthIndex = (lastMonthIndex + i) % 12;
-    let yearOffset = Math.floor((lastMonthIndex + i) / 12);
-    let forecastYear = (lastYear + yearOffset).toString();
-
-    console.log(`Demand Forecast - Month ${i}:`, {
-      lastThreeValues,
-      weightedAverage,
-      forecastValue,
-      month: MONTHS[monthIndex],
-      year: forecastYear,
-    });
-
-    forecastData.push({
-      month: MONTHS[monthIndex],
-      year: forecastYear,
-      date: new Date(parseInt(forecastYear), monthIndex, 1),
-      demand: null,
-      forecast: forecastValue,
-    });
-
-    // Update rolling values: add forecast but maintain only last 3 historical values for next calculation
-    rollingValues = [...rollingValues.slice(-3), forecastValue];
-  }
-
-  return forecastData;
-};
-const transformCategoryData = (lineData: any[]) => {
+const transformCategoryData = (lineData: LineDataRow[]) => {
   // Group by month-year and category
   const monthlyCategoryData = lineData.reduce(
     (acc: Record<string, Record<string, number>>, row) => {
       const dateStr = row.Date;
-      const category = row.Category;
-      const amount = parseFloat(row["Total Amount"] || 0);
+      const category = categorizeItemCode(row["Item Code"] || "");
+
+      // Fix numeric parsing bug with commas
+      const amount = parseNumber(row["Total Amount"]);
 
       if (!dateStr || !category || isNaN(amount) || amount <= 0) return acc;
 
-      const date = new Date(dateStr);
+      const date = new Date(`${dateStr}T00:00:00`);
       const year = date.getFullYear().toString();
-      const month = date.toLocaleString("en-US", { month: "short" });
+      const month = MONTHS[date.getMonth()];
       const monthYearKey = `${year}-${month}`;
 
       if (!acc[monthYearKey]) {
@@ -912,29 +1155,23 @@ const transformCategoryData = (lineData: any[]) => {
   if (monthEntries.length === 0) return [];
 
   // Sort by date
-  monthEntries.sort((a, b) => a[0].localeCompare(b[0]));
+  monthEntries.sort((a, b) => {
+    const [year1, month1] = a[0].split("-");
+    const [year2, month2] = b[0].split("-");
+
+    const date1 = createMonthDate(year1, month1);
+    const date2 = createMonthDate(year2, month2);
+
+    return date1.getTime() - date2.getTime();
+  });
 
   // Create continuous monthly timeline
   const [firstYear, firstMonth] = monthEntries[0][0].split("-");
   const [lastYear, lastMonth] =
     monthEntries[monthEntries.length - 1][0].split("-");
 
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const firstMonthIndex = months.indexOf(firstMonth);
-  const lastMonthIndex = months.indexOf(lastMonth);
+  const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
+  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
   const result: any[] = [];
   let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
@@ -942,14 +1179,14 @@ const transformCategoryData = (lineData: any[]) => {
 
   while (currentDate <= endDate) {
     const year = currentDate.getFullYear().toString();
-    const month = months[currentDate.getMonth()];
+    const month = MONTHS[currentDate.getMonth()];
     const monthYearKey = `${year}-${month}`;
     const categoryData = monthlyCategoryData[monthYearKey] || {};
 
     result.push({
       month,
       year,
-      date: new Date(currentDate),
+      date: new Date(currentDate).getTime(),
       ...categoryData,
     });
 
@@ -960,66 +1197,80 @@ const transformCategoryData = (lineData: any[]) => {
   return result;
 };
 
-// Generate category forecast using rolling moving average
+// Generate category forecast using 6-month weighted moving average with seasonal adjustment
 const generateCategoryForecast = (
-  historicalData: any[],
+  historicalData: MonthlyCategory[],
   categories: string[],
-) => {
-  const forecastData = [];
+): CategoryForecastData[] => {
+  // Prevent array access errors
+  if (!historicalData.length) return [];
+
+  const forecastData: CategoryForecastData[] = [];
   const lastYear = Number(historicalData[historicalData.length - 1].year);
   const lastMonth = historicalData[historicalData.length - 1].month;
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const lastMonthIndex = months.indexOf(lastMonth);
+  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
-  // Initialize rolling values for each category
+  // Compute seasonal factors per category using shared helper
+  const categorySeasonalFactors: {
+    [category: string]: Record<string, number>;
+  } = {};
+
+  categories.forEach((category) => {
+    // Create series data for seasonal factor calculation
+    const categorySeriesData = historicalData.map((d) => ({
+      month: d.month,
+      value: parseNumber(d[category]),
+    }));
+
+    // Use shared seasonal factor calculator
+    categorySeasonalFactors[category] =
+      calculateSeasonalFactors(categorySeriesData);
+  });
+
+  // Pre-compute full category values for better model accuracy
   const categoryValues: { [key: string]: number[] } = {};
   categories.forEach((category) => {
-    // Get last 6 months of actual values for this category
-    const values = historicalData
-      .slice(-6)
-      .map((item) => item[category] || 0)
-      .filter((val) => val > 0);
+    // Use full historical series instead of just last 6 months
+    const values = historicalData.map((item) => parseNumber(item[category]));
     categoryValues[category] = values.length > 0 ? values : [0];
   });
 
-  for (let i = 1; i <= 12; i++) {
+  // Limit forecast horizon to 6 months
+  const maxForecastHorizon = 6;
+
+  // Pre-compute forecasts for all categories to avoid recalculation in loop
+  const categoryForecasts: { [category: string]: number[] } = {};
+  categories.forEach((category) => {
+    const values = categoryValues[category];
+
+    // Use shared forecasting utility with seasonal factors
+    categoryForecasts[category] = forecastWeightedMovingAverage(values, {
+      horizon: maxForecastHorizon,
+      seasonalFactors: categorySeasonalFactors[category] || {},
+      lastMonth: lastMonth,
+      lastYear: Number(lastYear),
+      enableSeasonality: historicalData.length >= 24,
+    });
+  });
+
+  for (let i = 1; i <= maxForecastHorizon; i++) {
     const monthIndex = (lastMonthIndex + i) % 12;
     const yearOffset = Math.floor((lastMonthIndex + i) / 12);
     const forecastYear = (lastYear + yearOffset).toString();
+    const forecastMonth = MONTHS[monthIndex];
 
     const forecastItem: any = {
-      month: months[monthIndex],
+      month: forecastMonth,
       year: forecastYear,
-      date: new Date(parseInt(forecastYear), monthIndex, 1),
+      date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
     };
 
-    // Generate forecast for each category using rolling moving average
+    // Generate forecast for each category using cached results
     categories.forEach((category) => {
-      const values = categoryValues[category];
-      if (values.length > 0) {
-        const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
-        const forecast = Math.round(avg);
-
-        forecastItem[category] = forecast;
-
-        // Update rolling values: add forecast and remove oldest
-        categoryValues[category] = [...values.slice(1), forecast];
-      } else {
-        forecastItem[category] = 0;
-      }
+      const forecasts = categoryForecasts[category];
+      // Get the forecast for this month (index i-1 since arrays are 0-based)
+      forecastItem[category] =
+        forecasts && forecasts.length >= i ? forecasts[i - 1] : 0;
     });
 
     forecastData.push(forecastItem);
@@ -1070,17 +1321,28 @@ const ChartContainer = memo(
 
 ChartContainer.displayName = "ChartContainer";
 
-export function ForecastPlanning() {
-  const [selectedPeriod, setSelectedPeriod] = useState<"12months" | "2years">(
+// ============================================================================
+// REACT COMPONENT
+// ============================================================================
+
+const ForecastPlanning: React.FC = () => {
+  const [sheetData, setSheetData] = useState<MonthlySpend[]>([]);
+  const [categoryData, setCategoryData] = useState<any[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<"12months" | "18months">(
     "12months",
   );
-  const [sheetData, setSheetData] = useState<MonthlySpend[]>([]);
-  const [categoryData, setCategoryData] = useState<MonthlyCategory[]>([]);
-  const [demandData, setDemandData] = useState<MonthlyDemand[]>([]);
   const [procurementLineData, setProcurementLineData] = useState<
     ProcurementLineData[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [projectBurnRateData, setProjectBurnRateData] = useState<
+    ProjectBurnRateData[]
+  >([]);
+  const [selectedProjectBurnRate, setSelectedProjectBurnRate] =
+    useState<string>("");
+  const [budgetLimit, setBudgetLimit] = useState<string>("");
+  const [allHeadRows, setAllHeadRows] = useState<any[]>([]);
+  const [allProjectsList, setAllProjectsList] = useState<string[]>([]);
 
   // Fetch data from Google Sheets on component mount
   useEffect(() => {
@@ -1096,15 +1358,48 @@ export function ForecastPlanning() {
         const transformedCategoryData = transformCategoryData(lineData.rows);
         setCategoryData(transformedCategoryData);
 
-        // Transform line data for demand forecasting
-        const transformedDemandData = transformDemandData(lineData.rows);
-        setDemandData(transformedDemandData);
-
         // Transform line data for procurement line forecasting
         const transformedProcurementLineData = transformProcurementLineData(
           lineData.rows,
         );
         setProcurementLineData(transformedProcurementLineData);
+
+        // Initialize project list and selection
+        const allProjects = Array.from(
+          new Set(
+            headData.rows.map((row) =>
+              String(
+                row.Project ||
+                  row.projectCode ||
+                  row["Project Code"] ||
+                  "Default Project",
+              ),
+            ),
+          ),
+        ).sort();
+
+        const initialProject = allProjects.includes("P65019")
+          ? "P65019"
+          : allProjects[0] || "";
+        setSelectedProjectBurnRate(initialProject);
+        setAllProjectsList(allProjects);
+        setAllHeadRows(headData.rows); // Store all rows for reuse
+
+        // Transform project burn rate data for specific project
+        const projectRows = headData.rows.filter((row) => {
+          const p =
+            row.Project ||
+            row.projectCode ||
+            row["Project Code"] ||
+            "Default Project";
+          return p === initialProject;
+        });
+
+        const burnRate = transformProjectBurnRateData(
+          projectRows,
+          initialProject,
+        );
+        setProjectBurnRateData(burnRate);
       } catch (error) {
         console.error("Error fetching sheet data:", error);
       } finally {
@@ -1115,26 +1410,57 @@ export function ForecastPlanning() {
     fetchData();
   }, []);
 
+  // Update project burn rate data when selected project changes
+  useEffect(() => {
+    const updateProjectData = () => {
+      if (!selectedProjectBurnRate || allHeadRows.length === 0) return;
+
+      try {
+        // Filter stored data for selected project instead of calling API
+        const projectRows = allHeadRows.filter((row) => {
+          const p = String(
+            row.Project ||
+              row.projectCode ||
+              row["Project Code"] ||
+              "Default Project",
+          );
+          return p === selectedProjectBurnRate;
+        });
+
+        const burnRate = transformProjectBurnRateData(
+          projectRows,
+          selectedProjectBurnRate,
+        );
+        setProjectBurnRateData(burnRate);
+      } catch (error) {
+        console.error("Error updating project data:", error);
+      }
+    };
+
+    updateProjectData();
+  }, [selectedProjectBurnRate, allHeadRows]);
+
   // Generate historical data options from real data
   const historicalDataOptions = useMemo(() => {
     return generateHistoricalOptions(sheetData);
   }, [sheetData]);
 
   // Memoized forecast data to prevent duplicate calculations
+  const forecastTrainingData = historicalDataOptions[selectedPeriod];
+
   const forecastData = useMemo(() => {
-    const historical = historicalDataOptions[selectedPeriod];
-    return generateMovingAverageForecast(historical);
-  }, [selectedPeriod, historicalDataOptions]);
+    if (!forecastTrainingData || forecastTrainingData.length === 0) {
+      return [];
+    }
+    return generateMovingAverageForecast(forecastTrainingData);
+  }, [forecastTrainingData]);
 
   // Memoized category data and forecast
   const categories = useMemo(() => {
     const allCategories = new Set<string>();
     categoryData.forEach((item) => {
-      Object.keys(item).forEach((key) => {
-        if (key !== "month" && key !== "year") {
-          allCategories.add(key);
-        }
-      });
+      const extractedCategories = extractCategories(item);
+      extractedCategories.forEach((category) => allCategories.add(category));
     });
     // Sort categories in specific order: Service, Material, Other
     const categoryOrder = ["Service", "Material", "Other"];
@@ -1151,57 +1477,28 @@ export function ForecastPlanning() {
 
   const categoryForecastData = useMemo(() => {
     if (categoryData.length === 0) return [];
-    return generateCategoryForecast(categoryData.slice(-12), categories); // Use last 12 months
+    return generateCategoryForecast(categoryData, categories);
   }, [categoryData, categories]);
 
   const categorySpendingData = useMemo(() => {
-    const historical = categoryData.slice(-12); // Use last 12 months
+    const historical = categoryData; // Use full historical data
     return [...historical, ...categoryForecastData];
   }, [categoryData, categoryForecastData]);
-
-  // Memoized demand forecast data
-  const demandForecastData = useMemo(() => {
-    if (demandData.length === 0) return [];
-    return generateDemandForecast(demandData.slice(-12)); // Use last 12 months
-  }, [demandData]);
-
-  const demandSpendingData = useMemo(() => {
-    const historical = demandData.slice(-12); // Use last 12 months
-    return [...historical, ...demandForecastData];
-  }, [demandData, demandForecastData]);
 
   // Memoized procurement line forecast data
   const monthlyExpenseForecastData = useMemo(() => {
     if (procurementLineData.length === 0) return [];
-    return generateMonthlyExpenseForecast(procurementLineData.slice(-12));
+    return generateMonthlyExpenseForecast(procurementLineData);
   }, [procurementLineData]);
 
   const categoriesList = useMemo(() => {
     const allCategories = new Set<string>();
     procurementLineData.forEach((item) => {
-      Object.keys(item).forEach((key) => {
-        if (
-          key !== "month" &&
-          key !== "year" &&
-          key !== "date" &&
-          key !== "totalQuantity" &&
-          key !== "totalAmount"
-        ) {
-          allCategories.add(key);
-        }
-      });
+      const categories = extractCategories(item);
+      categories.forEach((category) => allCategories.add(category));
     });
     return Array.from(allCategories).sort();
   }, [procurementLineData]);
-
-  const categoryDemandForecastData = useMemo(() => {
-    if (procurementLineData.length === 0 || categoriesList.length === 0)
-      return [];
-    return generateCategoryDemandForecast(
-      procurementLineData.slice(-12),
-      categoriesList,
-    );
-  }, [procurementLineData, categoriesList]);
 
   const spendingData = useMemo(() => {
     const historical = historicalDataOptions[selectedPeriod];
@@ -1213,17 +1510,42 @@ export function ForecastPlanning() {
     return validateSpendingData(spendingData);
   }, [spendingData]);
 
+  const projectsForSelect = useMemo(() => {
+    return [...allProjectsList].sort();
+  }, [allProjectsList]);
+
+  const projectBurnRatePlotData = useMemo(() => {
+    // If manual budget limit is provided, override the calculated budget
+    if (budgetLimit && budgetLimit.trim() !== "") {
+      const manualBudget = parseFloat(budgetLimit.replace(/,/g, ""));
+      if (!isNaN(manualBudget)) {
+        return projectBurnRateData.map((item) => ({
+          ...item,
+          budget: manualBudget,
+        }));
+      }
+    }
+
+    return projectBurnRateData;
+  }, [projectBurnRateData, budgetLimit]);
+
   // Memoized calculations for better performance
   const statistics = useMemo(() => {
     const historicalData = historicalDataOptions[selectedPeriod];
-    console.log("Debug - Selected period:", selectedPeriod);
-    console.log("Debug - Historical data for period:", historicalData);
+    if (process.env.NODE_ENV === "development") {
+      console.log("Debug - Selected period:", selectedPeriod);
+      console.log("Debug - Historical data for period:", historicalData);
+    }
 
     const actualValues = historicalData
-      .filter((d) => d.actual !== null && d.actual > 0)
-      .map((d) => d.actual as number);
+      .filter((d: MonthlySpend) => d.actual !== null && d.actual > 0)
+      .map((d: MonthlySpend) => d.actual as number);
 
-    console.log("Debug - Actual values:", actualValues);
+    const forecastValues = forecastData.map((d: any) => d.forecast);
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("Debug - Actual values:", actualValues);
+    }
 
     // Guard against invalid data
     if (actualValues.length === 0) {
@@ -1232,17 +1554,50 @@ export function ForecastPlanning() {
         totalForecast: 0,
         maxForecast: 0,
         forecastGrowth: 0,
+        mape: 0,
+        rmse: 0,
       };
     }
 
     const averageSpend =
-      actualValues.reduce((sum: number, val: number) => sum + val, 0) /
-      actualValues.length;
+      actualValues.length > 0
+        ? actualValues.reduce((sum: number, val: number) => sum + val, 0) /
+          actualValues.length
+        : 0;
     const totalForecast = forecastData.reduce(
       (sum: number, d: any) => sum + d.forecast,
       0,
     );
     const maxForecast = Math.max(...forecastData.map((d: any) => d.forecast));
+
+    // Calculate model accuracy metrics using backtesting
+    const mape = calculateMAPE(historicalData);
+    const rmse = calculateRMSE(historicalData);
+
+    // Calculate forecast reliability based on coefficient of variation
+    const mean =
+      actualValues.length > 0
+        ? actualValues.reduce((sum: number, val: number) => sum + val, 0) /
+          actualValues.length
+        : 0;
+    const variance =
+      actualValues.length > 0
+        ? actualValues.reduce(
+            (sum: number, val: number) => sum + Math.pow(val - mean, 2),
+            0,
+          ) / actualValues.length
+        : 0;
+    const stdDev = Math.sqrt(variance);
+    const coefficientOfVariation = mean > 0 ? stdDev / mean : 0;
+
+    let forecastReliability: "High" | "Moderate" | "Low";
+    if (coefficientOfVariation > 0.6) {
+      forecastReliability = "Low";
+    } else if (coefficientOfVariation > 0.3) {
+      forecastReliability = "Moderate";
+    } else {
+      forecastReliability = "High";
+    }
 
     // Calculate growth percentage safely
     const forecastGrowth =
@@ -1252,20 +1607,27 @@ export function ForecastPlanning() {
           100
         : 0;
 
-    console.log("Statistics Debug:", {
-      selectedPeriod,
-      averageSpend,
-      totalForecast,
-      maxForecast,
-      forecastGrowth,
-      actualValuesLength: actualValues.length,
-    });
+    if (process.env.NODE_ENV === "development") {
+      console.log("Statistics Debug:", {
+        selectedPeriod,
+        averageSpend,
+        totalForecast,
+        maxForecast,
+        forecastGrowth,
+        mape,
+        rmse,
+        actualValuesLength: actualValues.length,
+      });
+    }
 
     return {
       averageSpend,
       totalForecast,
       maxForecast,
       forecastGrowth,
+      mape,
+      rmse,
+      forecastReliability,
     };
   }, [selectedPeriod, historicalDataOptions, forecastData]);
 
@@ -1274,7 +1636,7 @@ export function ForecastPlanning() {
     switch (period) {
       case "12months":
         return "Last 12 Months";
-      case "2years":
+      case "18months":
         return "Last 18 Months";
       default:
         return period;
@@ -1285,7 +1647,7 @@ export function ForecastPlanning() {
     switch (period) {
       case "12months":
         return 12;
-      case "2years":
+      case "18months":
         return 18;
       default:
         return 12;
@@ -1298,10 +1660,10 @@ export function ForecastPlanning() {
         <LoadingState />
       ) : (
         <>
-          {/* Procurement Spending Forecast */}
+          {/* Procurement Demand Forecast */}
           <ChartContainer
-            title="Procurement Spending Forecast"
-            subtitle="Historical procurement spending with projected future costs"
+            title="Procurement Demand Forecast"
+            subtitle="Shows historical demand and forecasted future procurement demand"
             delay={0.2}
             className="px-8 pt-6 pb-5"
             headerAction={
@@ -1346,7 +1708,7 @@ export function ForecastPlanning() {
                     className="recharts-legend-item-text"
                     style={{ color: "rgb(59, 130, 246)" }}
                   >
-                    Actual
+                    Total Amount
                   </span>
                 </li>
                 <li
@@ -1379,7 +1741,7 @@ export function ForecastPlanning() {
                     className="recharts-legend-item-text"
                     style={{ color: "rgb(168, 85, 247)" }}
                   >
-                    Forecast
+                    Forecast Amount
                   </span>
                 </li>
               </ul>
@@ -1393,7 +1755,7 @@ export function ForecastPlanning() {
               </div>
 
               <div className="flex gap-2">
-                {["12months", "2years"].map((period) => (
+                {["12months", "18months"].map((period) => (
                   <button
                     key={period}
                     onClick={() => setSelectedPeriod(period as any)}
@@ -1452,7 +1814,7 @@ export function ForecastPlanning() {
                         stroke="#e5e7eb"
                       />
                       <XAxis
-                        dataKey="monthLabel"
+                        dataKey="date"
                         axisLine={false}
                         tickLine={false}
                         padding={{ left: 20, right: 20 }}
@@ -1460,6 +1822,9 @@ export function ForecastPlanning() {
                         fontSize={12}
                         xAxisId="primary"
                         tickMargin={5}
+                        tickFormatter={(value) =>
+                          MONTHS[new Date(value).getMonth()]
+                        }
                       />
                       <XAxis
                         dataKey="yearLabel"
@@ -1474,31 +1839,20 @@ export function ForecastPlanning() {
                         tick={{ dy: -2 }}
                         interval={0}
                         tickFormatter={(value, index) => {
-                          // Only show year label for the middle month of each year
                           if (!chartData || chartData.length === 0) return "";
-
-                          // Group months by year
                           const yearGroups: { [key: string]: number[] } = {};
                           chartData.forEach((item: any, idx: number) => {
                             const year = item.yearLabel;
-                            if (!yearGroups[year]) {
-                              yearGroups[year] = [];
-                            }
+                            if (!yearGroups[year]) yearGroups[year] = [];
                             yearGroups[year].push(idx);
                           });
-
-                          // Check if this index should show year label (between months 6 and 7)
                           for (const year in yearGroups) {
                             const indices = yearGroups[year];
-                            // For 12 months, position between month 6 and 7 (index 6)
                             const targetIndex =
                               indices[6] ||
                               indices[Math.floor(indices.length / 2)];
-                            if (index === targetIndex) {
-                              return value;
-                            }
+                            if (index === targetIndex) return value;
                           }
-
                           return "";
                         }}
                       />
@@ -1506,11 +1860,16 @@ export function ForecastPlanning() {
                         axisLine={false}
                         tickLine={false}
                         tick={{ fill: "#6b7280", fontSize: 12 }}
-                        tickFormatter={(value) =>
-                          value === 0
+                        tickFormatter={(value) => {
+                          const numValue = Number(value) || 0;
+                          return numValue === 0
                             ? "0k"
-                            : `${(value / 1000).toLocaleString()}k`
-                        }
+                            : `${(numValue / 1000).toLocaleString("en-US", {
+                                minimumFractionDigits:
+                                  (numValue / 1000) % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })}k`;
+                        }}
                       />
                       <Tooltip
                         wrapperStyle={{ zIndex: 1000 }}
@@ -1538,55 +1897,103 @@ export function ForecastPlanning() {
                           lineHeight: "1.5",
                           padding: "0px",
                         }}
-                        formatter={(value: number, name: string) => [
-                          `${value.toLocaleString()}`,
-                          name,
-                        ]}
-                        labelFormatter={(label, payload) => {
-                          // Use MONTH_MAP from outside component to avoid recreation
-                          const fullMonth = MONTH_MAP[label] || label;
-                          const year = payload[0]?.payload?.yearLabel || "";
-                          return `${fullMonth} ${year}`;
+                        formatter={(
+                          value: number,
+                          name: string,
+                          payload: any,
+                        ) => {
+                          // Fix tooltip payload crash risk with safe optional chaining
+                          const data = payload?.[0]?.payload;
+
+                          if (name === "Forecast Amount" && data) {
+                            const forecast = Number(data.forecast) || 0;
+                            const low = Number(data.forecast_low) || 0;
+                            const high = Number(data.forecast_high) || 0;
+                            return [
+                              `Forecast: ${forecast.toLocaleString("en-US", {
+                                minimumFractionDigits:
+                                  forecast % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })}`,
+                              `Range: ${low.toLocaleString("en-US", {
+                                minimumFractionDigits: low % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })} - ${high.toLocaleString("en-US", {
+                                minimumFractionDigits: high % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })}`,
+                            ];
+                          }
+
+                          const numValue = Number(value) || 0;
+                          return [
+                            `${numValue.toLocaleString("en-US", {
+                              minimumFractionDigits: numValue % 1 === 0 ? 0 : 2,
+                              maximumFractionDigits: 2,
+                            })}`,
+                            name,
+                          ];
                         }}
+                        labelFormatter={(label, payload) => {
+                          if (payload?.[0]) {
+                            const date = new Date(label);
+                            return date.toLocaleString("en-US", {
+                              month: "long",
+                              year: "numeric",
+                            });
+                          }
+                          return label;
+                        }}
+                      />
+                      <Area
+                        dataKey="forecast_high"
+                        stroke="none"
+                        fill="#a855f7"
+                        fillOpacity={0.15}
+                      />
+                      <Area
+                        dataKey="forecast_low"
+                        stroke="none"
+                        fill="#ffffff"
+                        fillOpacity={1}
                       />
                       <Line
                         type="monotone"
                         dataKey="actual"
                         stroke="#3b82f6"
-                        strokeWidth={2}
+                        strokeWidth={3}
                         dot={{
                           fill: "#3b82f6",
-                          r: 2,
+                          r: 4,
+                          strokeWidth: 2,
+                          stroke: "#fff",
                         }}
                         activeDot={{
-                          r: 4,
+                          r: 6,
                           fill: "#3b82f6",
                           stroke: "#fff",
                           strokeWidth: 2,
                         }}
                         animationDuration={1500}
                         xAxisId="primary"
-                        name="Actual"
+                        name="Total Amount"
                       />
                       <Line
                         type="monotone"
                         dataKey="forecast"
                         stroke="#a855f7"
-                        strokeWidth={2}
+                        strokeWidth={2.5}
                         strokeDasharray="8 4"
-                        dot={{
-                          fill: "#a855f7",
-                          r: 2,
-                        }}
+                        dot={false}
                         activeDot={{
-                          r: 4,
+                          r: 5,
                           fill: "#a855f7",
                           stroke: "#fff",
                           strokeWidth: 2,
                         }}
                         animationDuration={1500}
                         xAxisId="primary"
-                        name="Forecast"
+                        name="Forecast Amount"
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -1595,296 +2002,312 @@ export function ForecastPlanning() {
             </div>
           </ChartContainer>
 
-          {/* Procurement Demand Forecast */}
+          {/* Project Budget Burn Rate Chart */}
           <ChartContainer
-            title="Procurement Demand Forecast"
-            subtitle="Monthly procurement demand with predicted future demand"
-            delay={0.4}
+            title="Project Budget Burn Rate"
+            subtitle="Tracks cumulative project spending against the budget limit"
+            delay={0.6}
             className="px-8 pt-6 pb-5"
             headerAction={
-              <ul
-                className="recharts-default-legend"
-                style={{
-                  padding: "0px",
-                  margin: "0px",
-                  textAlign: "center",
-                  fontSize: "16px",
-                  fontWeight: "400",
-                  color: "rgb(71, 85, 105)",
-                }}
-              >
-                <li
-                  className="recharts-legend-item legend-item-0"
-                  style={{ display: "inline-block", marginRight: "10px" }}
-                >
-                  <svg
-                    className="recharts-surface"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 32 32"
-                    style={{
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "4px",
-                    }}
-                  >
-                    <title></title>
-                    <desc></desc>
-                    <path
-                      fill="#3b82f6"
-                      cx="16"
-                      cy="16"
-                      className="recharts-symbols"
-                      transform="translate(16, 16)"
-                      d="M16,0A16,16,0,1,1,-16,0A16,16,0,1,1,16,0"
-                    ></path>
-                  </svg>
-                  <span
-                    className="recharts-legend-item-text"
-                    style={{ color: "rgb(59, 130, 246)" }}
-                  >
-                    Actual Demand
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-600">
+                    Project :
                   </span>
-                </li>
-                <li
-                  className="recharts-legend-item legend-item-1"
-                  style={{ display: "inline-block", marginRight: "10px" }}
-                >
-                  <svg
-                    className="recharts-surface"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 32 32"
-                    style={{
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "4px",
-                    }}
+                  <select
+                    value={selectedProjectBurnRate}
+                    onChange={(e) => setSelectedProjectBurnRate(e.target.value)}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   >
-                    <title></title>
-                    <desc></desc>
-                    <path
-                      fill="#a855f7"
-                      cx="16"
-                      cy="16"
-                      className="recharts-symbols"
-                      transform="translate(16, 16)"
-                      d="M16,0A16,16,0,1,1,-16,0A16,16,0,1,1,16,0"
-                    ></path>
-                  </svg>
-                  <span
-                    className="recharts-legend-item-text"
-                    style={{ color: "rgb(168, 85, 247)" }}
-                  >
-                    Forecast Demand
+                    {projectsForSelect.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-600">
+                    Budget Limit :
                   </span>
-                </li>
-              </ul>
-            }
-          >
-            {/* Historical Data Selection */}
-            <div className="mb-6 flex items-center gap-4">
-              <div className="flex items-center gap-2 text-gray-600">
-                <Calendar size={18} />
-                <span className="text-sm font-medium">Historical Data :</span>
-              </div>
+                  <input
+                    type="text"
+                    value={budgetLimit}
+                    onChange={(e) => setBudgetLimit(e.target.value)}
+                    placeholder="Auto-calculate"
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all w-32"
+                  />
+                </div>
 
-              <div className="flex gap-2">
-                {["12months", "2years"].map((period) => (
-                  <button
-                    key={period}
-                    onClick={() => setSelectedPeriod(period as any)}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
-                      selectedPeriod === period
-                        ? "bg-blue-600 text-white shadow-md transform scale-105"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                <ul
+                  className="recharts-default-legend"
+                  style={{
+                    padding: "0px",
+                    margin: "0px",
+                    textAlign: "center",
+                    fontSize: "16px",
+                    fontWeight: "400",
+                    color: "rgb(71, 85, 105)",
+                  }}
+                >
+                  <li
+                    className="recharts-legend-item legend-item-0"
+                    style={{ display: "inline-block", marginRight: "10px" }}
                   >
-                    {period === "12months"
-                      ? "Last 12 Months"
-                      : "Last 18 Months"}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-4">
-              {(() => {
-                if (demandSpendingData.length === 0) {
-                  return (
-                    <div className="flex items-center justify-center h-64">
-                      <div className="text-center">
-                        <div className="text-gray-400 mb-2">📊</div>
-                        <div className="text-sm text-gray-500">
-                          No demand data available
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                return (
-                  <ResponsiveContainer width="100%" height={450}>
-                    <LineChart
-                      data={demandSpendingData}
-                      margin={{
-                        top: 20,
-                        right: 40,
-                        left: 30,
-                        bottom: 20,
+                    <svg
+                      className="recharts-surface"
+                      width="10"
+                      height="10"
+                      viewBox="0 0 32 32"
+                      style={{
+                        display: "inline-block",
+                        verticalAlign: "middle",
+                        marginRight: "4px",
                       }}
                     >
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        vertical={false}
-                        stroke="#e5e7eb"
-                      />
-                      <XAxis
-                        dataKey="month"
-                        axisLine={false}
-                        tickLine={false}
-                        padding={{ left: 20, right: 20 }}
-                        stroke="#6b7280"
-                        fontSize={12}
-                        tickMargin={5}
-                        xAxisId="primary"
-                      />
-                      <XAxis
-                        dataKey="year"
-                        stroke="#6b7280"
-                        fontSize={10}
-                        tickLine={false}
-                        axisLine={false}
-                        xAxisId="secondary"
-                        orientation="bottom"
-                        padding={{ left: 20, right: 20 }}
-                        height={10}
-                        tick={{ dy: -2 }}
-                        interval={0}
-                        tickFormatter={(value, index) => {
-                          // Only show year label for the middle month of each year
-                          if (
-                            !demandSpendingData ||
-                            demandSpendingData.length === 0
-                          )
-                            return "";
-
-                          // Group months by year
-                          const yearGroups: { [key: string]: number[] } = {};
-                          demandSpendingData.forEach(
-                            (item: any, idx: number) => {
-                              const year = item.year;
-                              if (!yearGroups[year]) {
-                                yearGroups[year] = [];
-                              }
-                              yearGroups[year].push(idx);
-                            },
-                          );
-
-                          // Check if this index should show year label (between months 6 and 7)
-                          for (const year in yearGroups) {
-                            const indices = yearGroups[year];
-                            // For 12 months, position between month 6 and 7 (index 6)
-                            const targetIndex =
-                              indices[6] ||
-                              indices[Math.floor(indices.length / 2)];
-                            if (index === targetIndex) {
-                              return value;
-                            }
-                          }
-
-                          return "";
-                        }}
-                      />
-                      <YAxis
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: "#6b7280", fontSize: 12 }}
-                        tickFormatter={(value) => value.toLocaleString()}
-                      />
-                      <Tooltip
-                        wrapperStyle={{ zIndex: 1000 }}
-                        contentStyle={{
-                          backgroundColor: "#ffffff",
-                          border: "1px solid #e5e7eb",
-                          borderRadius: "8px",
-                          padding: "12px 16px",
-                          fontSize: "16px",
-                          lineHeight: "1.5",
-                          fontFamily: "inherit",
-                          boxShadow:
-                            "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-                        }}
-                        labelStyle={{
-                          fontWeight: 700,
-                          color: "#111827",
-                          marginBottom: "8px",
-                          fontSize: "18px",
-                          lineHeight: "1.5",
-                        }}
-                        itemStyle={{
-                          color: "#111827",
-                          fontSize: "16px",
-                          lineHeight: "1.5",
-                          padding: "0px",
-                        }}
-                        formatter={(value: number, name: string) => [
-                          `${value.toLocaleString()}`,
-                          name,
-                        ]}
-                        labelFormatter={(label, payload) => {
-                          // Use MONTH_MAP from outside component to avoid recreation
-                          const fullMonth = MONTH_MAP[label] || label;
-                          const year = payload[0]?.payload?.year || "";
-                          return `${fullMonth} ${year}`;
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="demand"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        dot={{
-                          fill: "#3b82f6",
-                          r: 2,
-                        }}
-                        activeDot={{
-                          r: 4,
-                          fill: "#3b82f6",
-                          stroke: "#fff",
-                          strokeWidth: 2,
-                        }}
-                        animationDuration={1500}
-                        xAxisId="primary"
-                        name="Actual Demand"
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="forecast"
-                        stroke="#a855f7"
-                        strokeWidth={2}
-                        strokeDasharray="8 4"
-                        dot={{
-                          fill: "#a855f7",
-                          r: 2,
-                        }}
-                        activeDot={{
-                          r: 4,
-                          fill: "#a855f7",
-                          stroke: "#fff",
-                          strokeWidth: 2,
-                        }}
-                        animationDuration={1500}
-                        xAxisId="primary"
-                        name="Forecast Demand"
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                );
-              })()}
+                      <path
+                        fill="#3b82f6"
+                        cx="16"
+                        cy="16"
+                        className="recharts-symbols"
+                        transform="translate(16, 16)"
+                        d="M16,0A16,16,0,1,1,-16,0A16,16,0,1,1,16,0"
+                      ></path>
+                    </svg>
+                    <span
+                      className="recharts-legend-item-text"
+                      style={{ color: "rgb(59, 130, 246)" }}
+                    >
+                      Cumulative Spend
+                    </span>
+                  </li>
+                  <li
+                    className="recharts-legend-item legend-item-1"
+                    style={{ display: "inline-block", marginRight: "10px" }}
+                  >
+                    <svg
+                      className="recharts-surface"
+                      width="10"
+                      height="10"
+                      viewBox="0 0 32 32"
+                      style={{
+                        display: "inline-block",
+                        verticalAlign: "middle",
+                        marginRight: "4px",
+                      }}
+                    >
+                      <path
+                        fill="#ef4444"
+                        cx="16"
+                        cy="16"
+                        className="recharts-symbols"
+                        transform="translate(16, 16)"
+                        d="M16,0A16,16,0,1,1,-16,0A16,16,0,1,1,16,0"
+                      ></path>
+                    </svg>
+                    <span
+                      className="recharts-legend-item-text"
+                      style={{ color: "#ef4444" }}
+                    >
+                      Budget Limit
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            }
+          >
+            <div className="h-[450px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={projectBurnRatePlotData}
+                  margin={{ top: 20, right: 40, left: 30, bottom: 20 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="#e5e7eb"
+                  />
+                  <XAxis
+                    dataKey="monthLabel"
+                    axisLine={false}
+                    tickLine={false}
+                    stroke="#6b7280"
+                    fontSize={12}
+                    xAxisId="primary"
+                    padding={{ left: 20, right: 20 }}
+                    tickMargin={5}
+                  />
+                  <XAxis
+                    dataKey="yearLabel"
+                    stroke="#6b7280"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    xAxisId="secondary"
+                    orientation="bottom"
+                    padding={{ left: 20, right: 20 }}
+                    height={10}
+                    tick={{ dy: -2 }}
+                    interval={0}
+                    tickFormatter={(value, index) => {
+                      if (
+                        !projectBurnRatePlotData ||
+                        projectBurnRatePlotData.length === 0
+                      )
+                        return "";
+                      const yearGroups: { [key: string]: number[] } = {};
+                      projectBurnRatePlotData.forEach(
+                        (item: any, idx: number) => {
+                          const year = item.yearLabel;
+                          if (!yearGroups[year]) yearGroups[year] = [];
+                          yearGroups[year].push(idx);
+                        },
+                      );
+                      for (const year in yearGroups) {
+                        const indices = yearGroups[year];
+                        const targetIndex =
+                          indices[6] || indices[Math.floor(indices.length / 2)];
+                        if (index === targetIndex) return value;
+                      }
+                      return "";
+                    }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "8px",
+                      padding: "12px 16px",
+                      fontSize: "16px",
+                      lineHeight: "1.5",
+                      fontFamily: "inherit",
+                      boxShadow:
+                        "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+                    }}
+                    labelStyle={{
+                      fontWeight: 700,
+                      color: "#111827",
+                      marginBottom: "8px",
+                      fontSize: "18px",
+                      lineHeight: "1.5",
+                    }}
+                    itemStyle={{
+                      color: "#111827",
+                      fontSize: "16px",
+                      lineHeight: "1.5",
+                      padding: "0px",
+                    }}
+                    formatter={(value: number, name: string) => {
+                      const numValue = Number(value) || 0;
+                      return [
+                        `${numValue.toLocaleString("en-US", {
+                          minimumFractionDigits: numValue % 1 === 0 ? 0 : 2,
+                          maximumFractionDigits: 2,
+                        })}`,
+                        name,
+                      ];
+                    }}
+                    labelFormatter={(label: any, payload: any) => {
+                      const fullMonth = MONTH_MAP[label] || label;
+                      const year = payload?.[0]?.payload?.year || "";
+                      return `${fullMonth} ${year}`;
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="cumulative_spend"
+                    name="Cumulative Spend"
+                    stroke="#3b82f6"
+                    strokeWidth={3}
+                    dot={{
+                      r: 4,
+                      fill: "#3b82f6",
+                      strokeWidth: 2,
+                      stroke: "#fff",
+                    }}
+                    activeDot={{ r: 6, strokeWidth: 0 }}
+                    animationDuration={2000}
+                    xAxisId="primary"
+                  />
+                  <Line
+                    type="stepAfter"
+                    dataKey="budget"
+                    name="Budget Limit"
+                    stroke="#ef4444"
+                    strokeDasharray="5 5"
+                    strokeWidth={2.5}
+                    dot={false}
+                    activeDot={{ r: 5 }}
+                    animationDuration={1000}
+                    xAxisId="primary"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
+            {projectBurnRatePlotData.length > 0 &&
+              (() => {
+                const currentData =
+                  projectBurnRatePlotData[projectBurnRatePlotData.length - 1];
+                const totalSpend = projectBurnRatePlotData.reduce(
+                  (sum, d) => sum + d.monthly_spend,
+                  0,
+                );
+                const numberOfMonths = projectBurnRatePlotData.length;
+                const averageSpend = totalSpend / numberOfMonths;
+
+                // Calculate project duration dynamically
+                const projectStartDate = projectBurnRatePlotData[0].date;
+                const currentDate = currentData.date;
+
+                // Estimate project duration (fallback: historical data span * 1.5)
+                const projectDurationMonths = Math.ceil(numberOfMonths * 1.5);
+                const projectEndDate = new Date(projectStartDate);
+                projectEndDate.setMonth(
+                  projectEndDate.getMonth() + projectDurationMonths,
+                );
+
+                // Calculate remaining months
+                const remainingMonths = Math.max(
+                  0,
+                  (projectEndDate.getFullYear() - currentDate.getFullYear()) *
+                    12 +
+                    (projectEndDate.getMonth() - currentDate.getMonth()),
+                );
+
+                const projectedSpend =
+                  currentData.cumulative_spend + averageSpend * remainingMonths;
+
+                return (
+                  projectedSpend > currentData.budget &&
+                  currentData.cumulative_spend <= currentData.budget
+                );
+              })() && (
+                <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-xl flex items-center gap-3 text-orange-700">
+                  <AlertCircle className="w-5 h-5 text-orange-600 animate-pulse" />
+                  <span className="text-sm font-semibold">
+                    Budget Overrun Risk : Project spending may exceed the
+                    defined budget.
+                  </span>
+                </div>
+              )}
+            {projectBurnRatePlotData.length > 0 &&
+              projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
+                .cumulative_spend >
+                projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
+                  .budget && (
+                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
+                  <AlertCircle className="w-5 h-5 text-red-600 animate-pulse" />
+                  <span className="text-sm font-semibold">
+                    Budget Limit Exceeded : Project spending has surpassed the
+                    defined budget.
+                  </span>
+                </div>
+              )}
           </ChartContainer>
         </>
       )}
     </div>
   );
-}
+};
+
+export default ForecastPlanning;

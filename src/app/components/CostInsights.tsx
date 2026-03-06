@@ -305,7 +305,11 @@ const ExpenseTooltip = ({ active, payload, label }: any) => {
           lineHeight: 1.5,
         }}
       >
-        Total Amount : {Number(item.value).toLocaleString()}
+        Total Amount :{" "}
+        {Number(item.value).toLocaleString(undefined, {
+          minimumFractionDigits: Number(item.value) % 1 === 0 ? 0 : 2,
+          maximumFractionDigits: 2,
+        })}
       </div>
     </div>
   );
@@ -372,7 +376,11 @@ const SupplierTooltip = ({
             (supplier.service / supplier.total) * 100
               ? ((supplier.service / supplier.total) * 100).toFixed(0)
               : ((supplier.service / supplier.total) * 100).toFixed(1)}
-            % - {supplier.service.toLocaleString()}
+            % -{" "}
+            {supplier.service.toLocaleString(undefined, {
+              minimumFractionDigits: supplier.service % 1 === 0 ? 0 : 2,
+              maximumFractionDigits: 2,
+            })}
           </div>
         )}
 
@@ -392,7 +400,11 @@ const SupplierTooltip = ({
             (supplier.material / supplier.total) * 100
               ? ((supplier.material / supplier.total) * 100).toFixed(0)
               : ((supplier.material / supplier.total) * 100).toFixed(1)}
-            % - {supplier.material.toLocaleString()}
+            % -{" "}
+            {supplier.material.toLocaleString(undefined, {
+              minimumFractionDigits: supplier.material % 1 === 0 ? 0 : 2,
+              maximumFractionDigits: 2,
+            })}
           </div>
         )}
 
@@ -411,7 +423,11 @@ const SupplierTooltip = ({
             (supplier.other / supplier.total) * 100
               ? ((supplier.other / supplier.total) * 100).toFixed(0)
               : ((supplier.other / supplier.total) * 100).toFixed(1)}
-            % - {supplier.other.toLocaleString()}
+            % -{" "}
+            {supplier.other.toLocaleString(undefined, {
+              minimumFractionDigits: supplier.other % 1 === 0 ? 0 : 2,
+              maximumFractionDigits: 2,
+            })}
           </div>
         )}
       </div>
@@ -557,10 +573,7 @@ export function CostInsights({
         const categoryMap = lineRows.reduce((acc: any, row: any) => {
           const category = row.Category || row.category || "Other";
 
-          const amount =
-            parseFloat(
-              row["Total Amount"] || row.totalAmount || row.total || 0,
-            ) || 0;
+          const amount = Number(row["Total Amount"]) || 0;
 
           acc[category] = (acc[category] || 0) + amount;
 
@@ -604,7 +617,13 @@ export function CostInsights({
 
               value: value as number,
 
-              description: `{targetName} - {(value as number).toLocaleString()}`,
+              description: `${targetName} - ${(value as number).toLocaleString(
+                undefined,
+                {
+                  minimumFractionDigits: (value as number) % 1 === 0 ? 0 : 2,
+                  maximumFractionDigits: 2,
+                },
+              )}`,
 
               color: color,
             };
@@ -623,7 +642,17 @@ export function CostInsights({
           ),
         ].filter(Boolean);
 
-        setAllCategories(categories);
+        // Sort categories in specific order: Service, Material, Other
+        const sortedCategories = categories.sort((a, b) => {
+          const aIndex = categoryOrder.indexOf(a);
+          const bIndex = categoryOrder.indexOf(b);
+          if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+          if (aIndex !== -1) return -1;
+          if (bIndex !== -1) return 1;
+          return a.localeCompare(b);
+        });
+
+        setAllCategories(sortedCategories);
 
         const monthlyTrendMap = lineRows.reduce((acc: any, row: any) => {
           const dateStr = row.Date || row.date || row["DATE"];
@@ -675,10 +704,7 @@ export function CostInsights({
 
           const category = row.Category || row.category || "Other";
 
-          const amount =
-            parseFloat(
-              row["Total Amount"] || row.totalAmount || row.total || 0,
-            ) || 0;
+          const amount = Number(row["Total Amount"]) || 0;
 
           acc[monthKey].Total += amount;
 
@@ -780,10 +806,7 @@ export function CostInsights({
 
           const category = categorizeItemCode(itemCode);
 
-          const amount =
-            parseFloat(
-              row["Total Amount"] || row.totalAmount || row.total || 0,
-            ) || 0;
+          const amount = Number(row["Total Amount"]) || 0;
 
           acc[category] = (acc[category] || 0) + amount;
 
@@ -845,11 +868,9 @@ export function CostInsights({
         // 1. Supplier Spend
 
         const supplierMap = rows.reduce((acc: any, row: any) => {
-          const name = row.Supplier || row.supplierName || "Unknown";
+          const name = (row.Supplier || "Unknown").trim();
 
-          acc[name] =
-            (acc[name] || 0) +
-            (parseFloat(row["Total Amount"] || row.totalPrice) || 0);
+          acc[name] = (acc[name] || 0) + (Number(row["Total Amount"]) || 0);
 
           return acc;
         }, {});
@@ -874,8 +895,7 @@ export function CostInsights({
             row.Project || row.projectCode || row["Project Code"] || "Unknown";
 
           acc[projectCode] =
-            (acc[projectCode] || 0) +
-            (parseFloat(row["Total Amount"] || row.totalPrice) || 0);
+            (acc[projectCode] || 0) + (Number(row["Total Amount"]) || 0);
 
           return acc;
         }, {});
@@ -912,7 +932,7 @@ export function CostInsights({
 
           acc[monthYear][projectCode] =
             (acc[monthYear][projectCode] || 0) +
-            (parseFloat(row["Total Amount"] || row.totalPrice) || 0);
+            (Number(row["Total Amount"]) || 0);
 
           return acc;
         }, {});
@@ -936,8 +956,8 @@ export function CostInsights({
 
         setProjectMonthlyTrendData(projectMonthlyTrendArray);
 
-        // 5. Project Category Mix Analysis
-        const projectCategoryMap = rows.reduce((acc: any, row: any) => {
+        // 5. Project Category Mix Analysis - Use procurement_line data
+        const projectCategoryMap = lineRows.reduce((acc: any, row: any) => {
           const projectCode =
             row.Project || row.projectCode || row["Project Code"] || "Unknown";
           const category = row.Category || row.category || "Other";
@@ -948,7 +968,7 @@ export function CostInsights({
 
           acc[projectCode][category] =
             (acc[projectCode][category] || 0) +
-            (parseFloat(row["Total Amount"] || row.totalPrice) || 0);
+            (Number(row["Total Amount"]) || 0);
 
           return acc;
         }, {});
@@ -1004,7 +1024,7 @@ export function CostInsights({
           acc[monthKey].poDetails.push({
             poNumber: poNumber,
             date: dateStr,
-            totalAmount: parseFloat(row["Total Amount"] || row.totalPrice || 0), // This will be updated from head data
+            totalAmount: Number(row["Total Amount"]) || 0,
             category: row.Category || row.category || "Other",
             description: row.Description || row.description || "No description",
             projectCode: row.Project || row.project || "",
@@ -1021,10 +1041,7 @@ export function CostInsights({
                 String(row["PO Number"] || row.poNumber) === poDetail.poNumber,
             );
             if (headRow) {
-              poDetail.totalAmount =
-                parseFloat(
-                  String(headRow["Total Amount"] || headRow.totalPrice || 0),
-                ) || 0;
+              poDetail.totalAmount = Number(headRow["Total Amount"]) || 0;
             }
           });
         });
@@ -1041,9 +1058,7 @@ export function CostInsights({
         const catMap = rows.reduce((acc: any, row: any) => {
           const cat = row.Category || row.category || "Other";
 
-          acc[cat] =
-            (acc[cat] || 0) +
-            (parseFloat(row["Total Amount"] || row.totalPrice) || 0);
+          acc[cat] = (acc[cat] || 0) + (Number(row["Total Amount"]) || 0);
 
           return acc;
         }, {});
@@ -1056,59 +1071,149 @@ export function CostInsights({
           })),
         );
 
-        // Supplier Spending Trend data
-        const supplierTrendMap = new Map();
+        // Supplier Spending Trend - Use procurement_head data
+        const supplierTrendMap = new Map<string, Map<string, number>>();
 
-        rows.forEach((row: any) => {
-          const supplier = row.Supplier || row.supplierName || "Unknown";
+        rows.forEach((row: any, index: number) => {
+          // Normalize Supplier name
+          const supplier = (
+            row.Supplier ||
+            row.supplierName ||
+            "Unknown"
+          ).trim();
+
+          // Robust Total Amount Source Extraction
+          const amount = Number(
+            row["Total Amount"] ??
+              row["TOTAL AMOUNT"] ??
+              row["Total Amount "] ??
+              row.totalAmount ??
+              row.totalPrice ?? // Should be removed but used for debugging comparison
+              0,
+          );
+
+          // Adopt the date parsing logic from ProcurementOverview for consistency
+          let date;
           const dateStr = row.Date || row.date || row["DATE"];
 
-          if (dateStr) {
-            const date = new Date(dateStr);
-            const month = date.toLocaleString("en-US", { month: "short" }); // Jan, Feb, Mar, etc.
-            const year = date.getFullYear();
+          if (!dateStr) return;
 
-            // Convert to Buddhist Era if needed
-            let yearBE = year < 2400 ? year + 543 : year;
-
-            // Always use month-year as key for multi-year data
-            const monthKey = `${month}-${yearBE}`;
-
-            const amount =
-              parseFloat(row["Total Amount"] || row.totalPrice) || 0;
-
-            if (!supplierTrendMap.has(supplier)) {
-              supplierTrendMap.set(supplier, new Map());
+          if (typeof dateStr === "string") {
+            if (dateStr.includes("/")) {
+              const [d, m, y] = dateStr.split("/").map(Number);
+              // Handle BE year if necessary
+              const finalYear = y < 2400 ? y : y - 543;
+              date = new Date(finalYear, m - 1, d);
+            } else if (dateStr.includes("-")) {
+              date = new Date(dateStr);
             }
-
-            const supplierData = supplierTrendMap.get(supplier);
-
-            if (!supplierData.has(monthKey)) {
-              supplierData.set(monthKey, {
-                month: month,
-                amount: 0,
-                yearBE: yearBE,
-                monthIndex: date.getMonth(),
-                sortKey: date.getTime(),
-              });
-            }
-
-            supplierData.get(monthKey).amount += amount;
+          } else {
+            date = new Date(dateStr);
           }
+
+          if (!date || isNaN(date.getTime())) return;
+
+          // Temporary Debugging for first few rows
+          if (index < 5) {
+            console.log(`DEBUG ROW ${index}:`, {
+              originalRow: row,
+              extractedAmount: amount,
+              extractedDate: date.toISOString(),
+              supplier: supplier,
+            });
+          }
+
+          const month = date.toLocaleString("en-US", { month: "short" });
+          const year = date.getFullYear();
+          const monthKey = `${month}-${year}`;
+
+          // Aggregate Supplier Spending: supplier → month → amount
+          if (!supplierTrendMap.has(supplier)) {
+            supplierTrendMap.set(supplier, new Map());
+          }
+
+          const supplierData = supplierTrendMap.get(supplier)!;
+
+          if (!supplierData.has(monthKey)) {
+            supplierData.set(monthKey, 0);
+          }
+
+          supplierData.set(monthKey, supplierData.get(monthKey)! + amount);
         });
 
-        // Convert to chart data format
-        const supplierTrendArray = Array.from(supplierTrendMap.entries()).map(
-          ([supplier, monthData]) => ({
-            supplier,
-            data: Array.from(monthData.values())
-              .sort((a: any, b: any) => a.sortKey - b.sortKey)
-              .map((item: any) => ({
-                month: `${item.month}-${item.yearBE}`,
-                amount: item.amount,
+        // Convert Aggregated Data for Chart with Chronological Order
+        const supplierTrendArray = Array.from(supplierTrendMap.entries())
+          .map(([supplier, monthData]) => {
+            // Convert month data to array and sort chronologically
+            const monthlyData = Array.from(monthData.entries())
+              .map(([month, amount]) => {
+                // Parse month and year for sorting
+                const [monthName, yearStr] = month.split("-");
+                const year = parseInt(yearStr);
+                const monthIndex = new Date(
+                  `${monthName} 1, ${year}`,
+                ).getMonth();
+                const sortKey = new Date(year, monthIndex, 1).getTime();
+
+                return {
+                  month,
+                  amount,
+                  sortKey,
+                };
+              })
+              .sort((a, b) => a.sortKey - b.sortKey); // Chronological sorting
+
+            return {
+              supplier: supplier, // Use original name from logic above
+              data: monthlyData.map(({ month, amount }) => ({
+                month,
+                amount,
               })),
-          }),
-        );
+            };
+          })
+          .filter((supplier) => supplier.data.length > 0); // Remove suppliers with no data
+
+        // Create "All Suppliers" aggregation efficiently (NO DOUBLE COUNTING)
+        if (supplierTrendArray.length > 0) {
+          const allSupplierMap = new Map<string, number>();
+
+          // Aggregate all suppliers per month (EXCLUDE "All Suppliers" to prevent double counting)
+          supplierTrendArray.forEach((supplier) => {
+            supplier.data.forEach((monthData) => {
+              const currentAmount = allSupplierMap.get(monthData.month) || 0;
+              allSupplierMap.set(
+                monthData.month,
+                currentAmount + monthData.amount,
+              );
+            });
+          });
+
+          // Convert to chart format and sort chronologically
+          const allSupplierData = Array.from(allSupplierMap.entries())
+            .map(([month, amount]) => {
+              const [monthName, yearStr] = month.split("-");
+              const year = parseInt(yearStr);
+              const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+              const sortKey = new Date(year, monthIndex, 1).getTime();
+
+              return {
+                month,
+                amount,
+                sortKey,
+              };
+            })
+            .sort((a, b) => a.sortKey - b.sortKey)
+            .map(({ month, amount }) => ({
+              month,
+              amount,
+            }));
+
+          // Add "All Suppliers" at the beginning
+          supplierTrendArray.unshift({
+            supplier: "All Suppliers",
+            data: allSupplierData,
+          });
+        }
 
         setSupplierTrendData(supplierTrendArray);
       } catch (e: any) {
@@ -1641,20 +1746,29 @@ export function CostInsights({
                           </ResponsiveContainer>
 
                           {/* Center Text for Donut */}
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[35%] text-center pointer-events-none">
                             <span className="block text-sm font-medium text-gray-600 mb-0.5">
                               Total Amount
                             </span>
                             <span className="block text-2xl font-bold text-gray-900 tracking-tight leading-none">
-                              {costDistributionData
-                                .reduce((sum: number, d) => sum + d.value, 0)
-                                .toLocaleString(undefined, {
-                                  maximumFractionDigits: 0,
-                                })}
+                              {(() => {
+                                const total = costDistributionData.reduce(
+                                  (sum: number, d) => sum + d.value,
+                                  0,
+                                );
+                                return total.toLocaleString(undefined, {
+                                  minimumFractionDigits:
+                                    total % 1 === 0 ? 0 : 2,
+                                  maximumFractionDigits: 2,
+                                });
+                              })()}
                             </span>
                             <span className="block text-xs font-medium text-gray-500 mt-1">
                               THB
                             </span>
+                            <p className="text-xs text-gray-400 mt-2">
+                              Excl. VAT
+                            </p>
                           </div>
                         </div>
 
@@ -1711,7 +1825,11 @@ export function CostInsights({
                                           <span className="text-lg font-medium text-gray-900 tracking-tight">
                                             {item.value.toLocaleString(
                                               undefined,
-                                              { maximumFractionDigits: 0 },
+                                              {
+                                                minimumFractionDigits:
+                                                  item.value % 1 === 0 ? 0 : 2,
+                                                maximumFractionDigits: 2,
+                                              },
                                             )}
                                           </span>
                                           <span className="text-[10px] font-medium text-gray-400 mb-1">
@@ -1978,7 +2096,10 @@ export function CostInsights({
                             padding: "0px",
                           }}
                           formatter={(value: number, name: string) => [
-                            `${value.toLocaleString()}`,
+                            `${value.toLocaleString(undefined, {
+                              minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+                              maximumFractionDigits: 2,
+                            })}`,
                             name,
                           ]}
                           labelFormatter={(label, payload) => {
@@ -2036,73 +2157,6 @@ export function CostInsights({
                     </ResponsiveContainer>
                   </div>
                 </ChartContainer>
-
-                {/* Item / Subcategory Breakdown - Horizontal Bar Chart */}
-
-                <ChartContainer
-                  title="Item Group Cost Distribution"
-                  subtitle="Breakdown of spending by Item Group"
-                  delay={0.3}
-                  className="px-8 pt-6 pb-8"
-                >
-                  <div className="w-full">
-                    {itemSubcategoryData.length === 0 ? (
-                      <p className="text-sm text-gray-500">No data</p>
-                    ) : (
-                      <div className="space-y-6">
-                        {/* Bar Items */}
-                        <div className="space-y-4">
-                          {itemSubcategoryData.map((item) => {
-                            const total = itemSubcategoryData.reduce(
-                              (sum, i) => sum + (i.value || 0),
-                              0,
-                            );
-                            const maxValue = Math.max(
-                              ...itemSubcategoryData.map((i) => i.value || 0),
-                            );
-
-                            const barWidth = maxValue
-                              ? (item.value / maxValue) * 100
-                              : 0;
-                            const pct = total ? (item.value / total) * 100 : 0;
-
-                            return (
-                              <div
-                                key={item.name}
-                                className="space-y-2 hover:font-bold cursor-pointer rounded-lg transition-colors p-4 -m-4 group"
-                              >
-                                <div className="flex justify-between items-end">
-                                  <label className="text-sm font-normal text-slate-700 dark:text-slate-300 group-hover:font-bold transition-all duration-200">
-                                    {item.name}
-                                  </label>
-                                  <span className="text-sm text-slate-900 dark:text-slate-100">
-                                    {item.value.toLocaleString()}{" "}
-                                    <span className="!font-normal">
-                                      (
-                                      {(() => {
-                                        const p = pct;
-                                        return p % 1 === 0
-                                          ? p.toString()
-                                          : p.toFixed(1);
-                                      })()}
-                                      %)
-                                    </span>
-                                  </span>
-                                </div>
-                                <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-500 rounded-full transition-all duration-500"
-                                    style={{ width: barWidth + "%" }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </ChartContainer>
               </div>
             )}
 
@@ -2112,7 +2166,7 @@ export function CostInsights({
                   title="Top Suppliers by Spending"
                   subtitle="Supplier spending with cost category breakdown"
                   delay={0.1}
-                  className="px-8 pt-6 pb-8"
+                  className="px-8 pt-6 pb-6"
                   headerAction={
                     <div className="flex items-center gap-4">
                       <ul
@@ -2380,7 +2434,11 @@ export function CostInsights({
                                 {supplier.name}
                               </label>
                               <span className="text-sm text-slate-900 dark:text-slate-100 group-hover:font-bold transition-all duration-200">
-                                {supplier.total.toLocaleString()}{" "}
+                                {supplier.total.toLocaleString(undefined, {
+                                  minimumFractionDigits:
+                                    supplier.total % 1 === 0 ? 0 : 2,
+                                  maximumFractionDigits: 2,
+                                })}{" "}
                                 <span className="!font-normal">
                                   ({percentage.toFixed(1)}%)
                                 </span>
@@ -2426,6 +2484,9 @@ export function CostInsights({
                       });
                     })()}
                   </div>
+                  <p className="text-xs text-gray-500 mt-4">
+                    *All amounts are exclusive of VAT.
+                  </p>
                 </ChartContainer>
 
                 <ChartContainer
@@ -2440,17 +2501,21 @@ export function CostInsights({
                         onChange={(e) => setSelectedSupplier(e.target.value)}
                         className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white"
                       >
-                        <option value="all">All Supplier</option>
-                        {supplierTrendData.map((supplier) => (
-                          <option
-                            key={supplier.supplier}
-                            value={supplier.supplier}
-                          >
-                            {supplier.supplier.length > 30
-                              ? supplier.supplier.substring(0, 30) + "..."
-                              : supplier.supplier}
-                          </option>
-                        ))}
+                        <option value="all">All Suppliers</option>
+                        {supplierTrendData
+                          .filter(
+                            (supplier) => supplier.supplier !== "All Suppliers",
+                          )
+                          .map((supplier) => (
+                            <option
+                              key={supplier.supplier}
+                              value={supplier.supplier}
+                            >
+                              {supplier.supplier.length > 30
+                                ? supplier.supplier.substring(0, 30) + "..."
+                                : supplier.supplier}
+                            </option>
+                          ))}
                       </select>
                     </div>
                   }
@@ -2460,38 +2525,9 @@ export function CostInsights({
                       // Get data for selected supplier or aggregated data from all suppliers
                       const selectedData =
                         selectedSupplier === "all"
-                          ? (() => {
-                              // Collect all unique month-years across all suppliers
-                              const allMonthKeys = new Set<string>();
-                              supplierTrendData.forEach((supplier) => {
-                                supplier.data.forEach((d: any) =>
-                                  allMonthKeys.add(d.month),
-                                );
-                              });
-
-                              // Sort month-keys chronologically
-                              const sortedMonthKeys = Array.from(
-                                allMonthKeys,
-                              ).sort((a, b) => {
-                                const [ma, ya] = a.split("-");
-                                const [mb, yb] = b.split("-");
-                                const dateA = new Date(`${ma} 1, ${ya}`);
-                                const dateB = new Date(`${mb} 1, ${yb}`);
-                                return dateA.getTime() - dateB.getTime();
-                              });
-
-                              // Aggregate amounts for each month-year
-                              return sortedMonthKeys.map((monthKey) => {
-                                let totalAmount = 0;
-                                supplierTrendData.forEach((supplier) => {
-                                  const item = supplier.data.find(
-                                    (d: any) => d.month === monthKey,
-                                  );
-                                  if (item) totalAmount += item.amount;
-                                });
-                                return { month: monthKey, amount: totalAmount };
-                              });
-                            })()
+                          ? supplierTrendData.find(
+                              (s) => s.supplier === "All Suppliers",
+                            )?.data || []
                           : supplierTrendData.find(
                               (s) => s.supplier === selectedSupplier,
                             )?.data || [];
@@ -2595,7 +2631,11 @@ export function CostInsights({
                               tickFormatter={(value) =>
                                 value === 0
                                   ? "0k"
-                                  : `${(value / 1000).toLocaleString()}k`
+                                  : `${(value / 1000).toLocaleString("en-US", {
+                                      minimumFractionDigits:
+                                        (value / 1000) % 1 === 0 ? 0 : 2,
+                                      maximumFractionDigits: 2,
+                                    })}k`
                               }
                             />
                             <Tooltip
@@ -2625,7 +2665,11 @@ export function CostInsights({
                                 padding: "0px",
                               }}
                               formatter={(value: number) => [
-                                `${value.toLocaleString()}`,
+                                `${value.toLocaleString("en-US", {
+                                  minimumFractionDigits:
+                                    value % 1 === 0 ? 0 : 2,
+                                  maximumFractionDigits: 2,
+                                })}`,
                                 "Total Amount",
                               ]}
                               labelFormatter={(label, payload) => {
@@ -2724,7 +2768,14 @@ export function CostInsights({
                                     {project.projectCode}
                                   </span>
                                   <span className="text-sm font-normal text-gray-900 group-hover:font-bold transition-all duration-200">
-                                    {project.totalAmount.toLocaleString()}
+                                    {project.totalAmount.toLocaleString(
+                                      undefined,
+                                      {
+                                        minimumFractionDigits:
+                                          project.totalAmount % 1 === 0 ? 0 : 2,
+                                        maximumFractionDigits: 2,
+                                      },
+                                    )}
                                   </span>
                                 </div>
                                 <div className="relative">
@@ -2950,7 +3001,10 @@ export function CostInsights({
                               padding: "0px",
                             }}
                             formatter={(value: number, name: string) => [
-                              `${Math.round(value).toLocaleString()}`,
+                              `${value.toLocaleString(undefined, {
+                                minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })}`,
                               name,
                             ]}
                             labelFormatter={(label, payload) => {
@@ -3247,7 +3301,11 @@ export function CostInsights({
                             Total Amount (Incl. VAT)
                           </p>
                           <p className="text-lg font-bold text-gray-900">
-                            {po.totalAmount.toLocaleString()}
+                            {po.totalAmount.toLocaleString(undefined, {
+                              minimumFractionDigits:
+                                po.totalAmount % 1 === 0 ? 0 : 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </p>
                         </div>
                       </div>
@@ -3325,7 +3383,11 @@ export function CostInsights({
                                       className="px-3 py-2 text-right font-normal text-gray-900"
                                       style={{ width: "20%" }}
                                     >
-                                      {item.amount.toLocaleString()}
+                                      {item.amount.toLocaleString(undefined, {
+                                        minimumFractionDigits:
+                                          item.amount % 1 === 0 ? 0 : 2,
+                                        maximumFractionDigits: 2,
+                                      })}
                                     </td>
                                   </tr>
                                 ),
@@ -3403,7 +3465,11 @@ export function CostInsights({
                             Total Amount (Incl. VAT)
                           </p>
                           <p className="text-lg font-bold text-gray-900">
-                            {po.totalAmount.toLocaleString()}
+                            {po.totalAmount.toLocaleString(undefined, {
+                              minimumFractionDigits:
+                                po.totalAmount % 1 === 0 ? 0 : 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </p>
                         </div>
                       </div>
@@ -3482,7 +3548,11 @@ export function CostInsights({
                                         className="px-3 py-2 text-right font-normal text-gray-900"
                                         style={{ width: "20%" }}
                                       >
-                                        {item.amount.toLocaleString()}
+                                        {item.amount.toLocaleString(undefined, {
+                                          minimumFractionDigits:
+                                            item.amount % 1 === 0 ? 0 : 2,
+                                          maximumFractionDigits: 2,
+                                        })}
                                       </td>
                                     </tr>
                                   ),
@@ -3521,7 +3591,11 @@ export function CostInsights({
                                     className="px-3 py-2 text-right font-normal text-gray-900"
                                     style={{ width: "20%" }}
                                   >
-                                    {po.totalAmount.toLocaleString()}
+                                    {po.totalAmount.toLocaleString(undefined, {
+                                      minimumFractionDigits:
+                                        po.totalAmount % 1 === 0 ? 0 : 2,
+                                      maximumFractionDigits: 2,
+                                    })}
                                   </td>
                                 </tr>
                               )}

@@ -502,7 +502,7 @@ export async function getMainSheetData(): Promise<SheetData> {
 }
 
 export async function getTab1Data(): Promise<SheetData> {
-  return getSheetDataByName("procurement_data");
+  return getSheetDataByName("procurement_head");
 }
 
 export async function getTab2Data(): Promise<SheetData> {
@@ -518,10 +518,10 @@ export async function getSheetNamesDynamic(): Promise<string[]> {
 }
 
 // Minimal no-ops for legacy code that might still call these
-export async function initializeSheetConfigs(): Promise<void> {}
-export async function updateSheetConfigsFromDatabase(): Promise<void> {}
-export function addNewSheet(_name: string): void {}
-export function updateSheetNames(_names: string[]): void {}
+export async function initializeSheetConfigs(): Promise<void> { }
+export async function updateSheetConfigsFromDatabase(): Promise<void> { }
+export function addNewSheet(_name: string): void { }
+export function updateSheetNames(_names: string[]): void { }
 export async function addSheetURL(
   _sheetName: string,
   _gid: string,

@@ -4,7 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { ProcurementOverview } from "./components/ProcurementOverview";
 import { CostInsights } from "./components/CostInsights";
-import { ForecastPlanning } from "./components/ForecastPlanning";
+import ForecastPlanning from "./components/ForecastPlanning";
 import { DataSource } from "./components/DataSource";
 import { DataUpload } from "./components/DataUpload";
 import { motion, AnimatePresence } from "motion/react";
