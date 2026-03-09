@@ -31,10 +31,10 @@ export function Sidebar({ currentView, onChangeView }: SidebarProps) {
       {/* Logo Section */}
       <div className="p-6 flex items-center space-x-3 whitespace-nowrap border-b border-gray-100">
         <div className="h-8 w-8 min-w-[2rem] rounded-lg bg-blue-600 flex items-center justify-center text-white">
-          <Package size={20} />
+          <img src="/image/Vector.svg" alt="MIE Logo" className="w-7 h-7" />
         </div>
         <span className="text-xl font-bold text-gray-900 tracking-tight opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-          CCTV Procure
+          MIE Procurement
         </span>
       </div>
 
