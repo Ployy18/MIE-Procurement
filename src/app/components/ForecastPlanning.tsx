@@ -24,7 +24,7 @@ import { LoadingState } from "./ui/LoadingState";
 type MonthlySpend = {
   month: string;
   year: string;
-  date: Date;
+  date: number; // Use timestamp for compatibility
   actual: number | null;
   forecast: number | null;
 };
@@ -32,8 +32,8 @@ type MonthlySpend = {
 type MonthlyCategory = {
   month: string;
   year: string;
-  date: Date;
-} & Record<string, number | undefined>;
+  date: number; // Use timestamp for compatibility
+} & Record<string, string | number | undefined>;
 
 type ProcurementLineData = {
   month: string;
@@ -128,10 +128,10 @@ function calculateSeasonalFactors(
     return factors;
   }
 
-  // Compute 6-month moving averages
+  // Compute 6-month moving averages (including current observation)
   const movingAverages: number[] = [];
   for (let i = 5; i < series.length; i++) {
-    const window = series.slice(i - 6, i).map((d) => d.value);
+    const window = series.slice(i - 5, i + 1).map((d) => d.value);
     const ma = window.reduce((sum, val) => sum + val, 0) / 6;
     movingAverages.push(ma);
   }
@@ -139,10 +139,13 @@ function calculateSeasonalFactors(
   // Calculate seasonal ratios: actual / movingAverage
   const monthlyRatios: Record<string, number[]> = {};
   series.forEach((d, index) => {
-    if (index >= 5 && index < series.length && movingAverages[index - 5] > 0) {
+    if (index >= 5 && index < series.length) {
+      const movingAverage = movingAverages[index - 5];
+      if (movingAverage <= 0) return; // Prevent divide-by-zero
+
       const month = d.month;
       const actual = d.value;
-      const ratio = actual / movingAverages[index - 5];
+      const ratio = actual / movingAverage;
 
       if (!monthlyRatios[month]) {
         monthlyRatios[month] = [];
@@ -174,11 +177,11 @@ function calculateSeasonalFactors(
     });
   }
 
-  // Clamp factors between 0.5 and 1.5
+  // Clamp factors between 0.6 and 1.4 for reduced volatility
   Object.keys(seasonalFactors).forEach((month) => {
     seasonalFactors[month] = Math.max(
-      0.5,
-      Math.min(1.5, seasonalFactors[month]),
+      0.6,
+      Math.min(1.4, seasonalFactors[month]),
     );
   });
 
@@ -329,8 +332,8 @@ const transformProcurementLineData = (
   const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
   const result: ProcurementLineData[] = [];
-  let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
-  const endDate = new Date(parseInt(lastYear), lastMonthIndex, 1);
+  let currentDate = createMonthDate(firstYear, firstMonth);
+  const endDate = createMonthDate(lastYear, lastMonth);
 
   while (currentDate <= endDate) {
     const year = currentDate.getFullYear().toString();
@@ -430,7 +433,7 @@ const forecastWeightedMovingAverage = (
   } = options;
 
   // Sanitize input data to remove invalid values
-  const cleanData = data.filter((v) => Number.isFinite(v) && v >= 0);
+  const cleanData = data.filter((v) => Number.isFinite(v));
 
   if (cleanData.length < 6) {
     // Fallback to simple growth for insufficient data
@@ -451,25 +454,45 @@ const forecastWeightedMovingAverage = (
     return forecasts;
   }
 
-  const weights = [0.3, 0.25, 0.2, 0.15, 0.07, 0.03];
+  const weights = [0.35, 0.25, 0.18, 0.12, 0.07, 0.03];
   const forecasts: number[] = [];
   let rollingWindow = [...cleanData];
 
   for (let i = 1; i <= horizon; i++) {
-    const windowValues = rollingWindow.slice(-6);
+    // Adaptive window size based on available historical data
+    let windowSize = 6;
+    if (rollingWindow.length >= 24) {
+      windowSize = 12;
+    } else if (rollingWindow.length >= 18) {
+      windowSize = 9;
+    } else if (rollingWindow.length >= 12) {
+      windowSize = 8;
+    }
 
-    if (windowValues.length < 6) break;
+    const windowValues = rollingWindow.slice(
+      Math.max(rollingWindow.length - windowSize, 0),
+    );
 
-    // Apply 6-month weighted moving average
+    if (windowValues.length < 6) {
+      // Use fallback logic to maintain forecast horizon
+      const fallback = rollingWindow[rollingWindow.length - 1] || 0;
+      forecasts.push(Math.max(0, fallback));
+      rollingWindow.push(fallback);
+      continue;
+    }
+
+    // Apply 6-month weighted moving average (explicitly use last 6 observations)
+    const effectiveWindow = windowValues.slice(-6);
     const baseForecast = weights.reduce(
       (sum, weight, j) =>
-        sum + windowValues[windowValues.length - 1 - j] * weight,
+        sum + effectiveWindow[effectiveWindow.length - 1 - j] * weight,
       0,
     );
 
-    // Add trend adjustment using linear regression slope
+    // Add trend adjustment using linear regression slope with increased responsiveness
     const trendSlope = calculateTrendSlope(windowValues);
-    const trendAdjustedForecast = baseForecast + trendSlope * 0.3;
+    const trendWeight = Math.min(0.4, 2 / windowValues.length);
+    const trendAdjustedForecast = baseForecast + trendSlope * trendWeight;
 
     // Apply seasonal factor only if enabled and sufficient data
     let seasonalFactor = 1.0;
@@ -480,19 +503,30 @@ const forecastWeightedMovingAverage = (
 
       // Get seasonal factor with bounds checking
       const rawSeasonalFactor = seasonalFactors[forecastMonth] || 1.0;
-      seasonalFactor = Math.max(0.5, Math.min(1.5, rawSeasonalFactor));
+      seasonalFactor = Math.max(0.6, Math.min(1.4, rawSeasonalFactor));
     }
 
     const seasonalForecast = trendAdjustedForecast * seasonalFactor;
 
-    // Clamp extreme spikes and ensure non-negative values
+    // Clamp extreme spikes with volatility-adaptive bounds
     const historicalAvg =
       cleanData.reduce((sum, val) => sum + (isNaN(val) ? 0 : val), 0) /
       cleanData.length;
+
+    // Stabilize volatility calculation by filtering zero values
+    const positiveValues = cleanData.filter((v) => v > 0);
+    const minValue =
+      positiveValues.length > 0 ? Math.min(...positiveValues) : 1;
+
+    const volatility =
+      cleanData.length > 1 ? Math.max(...cleanData) / Math.max(1, minValue) : 1;
+
+    const maxAllowed = historicalAvg * Math.min(4, 2 + volatility);
+
     const clampedForecast = Math.max(
       0,
-      seasonalForecast > historicalAvg * 2
-        ? historicalAvg * 1.8
+      seasonalForecast > maxAllowed
+        ? historicalAvg * (1.8 + volatility * 0.2)
         : seasonalForecast,
     );
 
@@ -509,6 +543,31 @@ const forecastWeightedMovingAverage = (
 
     // Add forecast to rolling window for next iteration
     rollingWindow.push(safeForecastValue);
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    // Calculate final window size for logging
+    let finalWindowSize = 6;
+    if (cleanData.length >= 24) {
+      finalWindowSize = 12;
+    } else if (cleanData.length >= 18) {
+      finalWindowSize = 9;
+    } else if (cleanData.length >= 12) {
+      finalWindowSize = 8;
+    }
+
+    console.log("[Forecast Debug]", {
+      dataLength: cleanData.length,
+      windowSize: finalWindowSize,
+      seasonalityEnabled: enableSeasonality,
+    });
+
+    console.log("[Forecast Model]", {
+      model: "WeightedMovingAverage",
+      window: finalWindowSize,
+      weights,
+      seasonality: enableSeasonality,
+    });
   }
 
   return forecasts;
@@ -560,6 +619,7 @@ const generateMonthlyExpenseForecast = (
   }
 
   // Use shared forecasting utility for consistent model with seasonal factors
+  if (!historicalData.length) return [];
   const lastYear = Number(historicalData[historicalData.length - 1].year);
   const lastMonth = historicalData[historicalData.length - 1].month;
 
@@ -575,7 +635,7 @@ const generateMonthlyExpenseForecast = (
     seasonalFactors,
     lastMonth,
     lastYear,
-    enableSeasonality: historicalData.length >= 24,
+    enableSeasonality: historicalData.length >= 24, // Align with seasonal factor calculation requirements
   });
 
   // Convert forecasts back to ProcurementLineData format
@@ -587,12 +647,17 @@ const generateMonthlyExpenseForecast = (
     const yearOffset = Math.floor((lastMonthIndex + i + 1) / 12);
     const forecastYear = (lastYear + yearOffset).toString();
 
+    // Ensure forecast value is finite before pushing
+    const safeForecastValue = Number.isFinite(forecastValue)
+      ? forecastValue
+      : 0;
+
     forecastData.push({
       month: MONTHS[monthIndex],
       year: forecastYear,
       date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
       totalQuantity: 0,
-      totalAmount: forecastValue,
+      totalAmount: safeForecastValue,
     } as any);
   });
 
@@ -600,7 +665,7 @@ const generateMonthlyExpenseForecast = (
 };
 
 // Data validation utilities
-const validateSpendingData = (data: any[]) => {
+const validateSpendingData = (data: MonthlySpend[]): boolean => {
   return data.every(
     (item) =>
       item &&
@@ -612,10 +677,13 @@ const validateSpendingData = (data: any[]) => {
 
 // Transform project-wise burn rate data (cumulative spend vs budget)
 const transformProjectBurnRateData = (
-  sheetData: any[],
+  sheetData: SheetDataRow[],
   selectedProject: string,
 ): ProjectBurnRateData[] => {
-  const monthGroups: Record<string, any> = {};
+  const monthGroups: Record<
+    string,
+    { month: string; year: string; date: Date; monthly_spend: number }
+  > = {};
 
   // Debug metrics
   const totalRows = sheetData.length;
@@ -708,7 +776,8 @@ const transformProjectBurnRateData = (
     Math.ceil((totalProjectSpend * 1.05) / 100000) * 100000;
   const mockBudget = budgetValue > 0 ? budgetValue : fallbackBudget;
 
-  sortedMonths.forEach((d) => {
+  for (let i = 0; i < sortedMonths.length; i++) {
+    const d = sortedMonths[i];
     // Cumulative = running total across months
     cumulative += d.monthly_spend;
     if (process.env.NODE_ENV === "development") {
@@ -727,7 +796,7 @@ const transformProjectBurnRateData = (
       budget: mockBudget,
       project: selectedProject,
     });
-  });
+  }
 
   return result;
 };
@@ -780,9 +849,9 @@ const transformSheetData = (sheetData: SheetDataRow[]) => {
   const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
   const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
-  const result: any[] = [];
-  let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
-  const endDate = new Date(parseInt(lastYear), lastMonthIndex, 1);
+  const result: MonthlySpend[] = [];
+  let currentDate = createMonthDate(firstYear, firstMonth);
+  const endDate = createMonthDate(lastYear, lastMonth);
 
   while (currentDate <= endDate) {
     const year = currentDate.getFullYear().toString();
@@ -809,16 +878,8 @@ const generateHistoricalOptions = (allData: MonthlySpend[]) => {
   // Clone array before sorting to avoid mutation
   const sortedData = [...allData].sort(
     (a, b) =>
-      new Date(
-        parseInt(a.year),
-        Math.max(0, MONTHS.indexOf(a.month)),
-        1,
-      ).getTime() -
-      new Date(
-        parseInt(b.year),
-        Math.max(0, MONTHS.indexOf(b.month)),
-        1,
-      ).getTime(),
+      createMonthDate(a.year, a.month).getTime() -
+      createMonthDate(b.year, b.month).getTime(),
   );
 
   // Get last 12 and 18 months from all data (counting backwards from latest data)
@@ -864,9 +925,7 @@ const calculateMAPE = (historicalData: MonthlySpend[]): number => {
 
         if (backtestForecasts.length > 0) {
           const backtestForecast = backtestForecasts[0];
-          const backtestTrendSlope = calculateTrendSlope(windowValues);
-          const backtestTrendAdjusted =
-            backtestForecast + backtestTrendSlope * 0.5;
+          const backtestTrendAdjusted = backtestForecast;
 
           const percentageError = Math.abs(
             (actualValue - backtestTrendAdjusted) / actualValue,
@@ -906,11 +965,12 @@ const calculateRMSE = (historicalData: MonthlySpend[]): number => {
 
       if (backtestForecasts.length > 0) {
         const backtestForecast = backtestForecasts[0];
-        const backtestTrendSlope = calculateTrendSlope(windowValues);
-        const backtestTrendAdjusted =
-          backtestForecast + backtestTrendSlope * 0.5;
+        const backtestTrendAdjusted = backtestForecast;
 
-        errors.push(actualValue - backtestTrendAdjusted);
+        const err = actualValue - backtestTrendAdjusted;
+        if (Number.isFinite(err)) {
+          errors.push(err);
+        }
       }
     }
   }
@@ -1039,22 +1099,26 @@ const generateMovingAverageForecast = (
   // Calculate seasonal factors using reusable helper
   const seasonalFactors = calculateSeasonalFactors(seriesData);
 
-  // Calculate RMSE for confidence intervals
+  // Calculate RMSE for confidence intervals using the same forecasting model as production
   const errors: number[] = [];
   for (let i = 6; i < seriesData.length; i++) {
-    const window = seriesData.slice(i - 6, i).map((d) => d.value);
-    const weights = [0.3, 0.25, 0.2, 0.15, 0.07, 0.03];
-    const backtestForecast = weights.reduce(
-      (sum, weight, j) => sum + window[5 - j] * weight,
-      0,
-    );
-
-    // Add trend adjustment for backtesting using linear regression
-    const backtestTrendSlope = calculateTrendSlope(window);
-    const backtestTrendAdjusted = backtestForecast + backtestTrendSlope * 0.5;
-
     const actualValue = seriesData[i].value;
-    errors.push(actualValue - backtestTrendAdjusted);
+
+    // Use full series up to current point to match production forecasting model
+    const windowValues = seriesData.slice(0, i).map((d) => d.value);
+
+    const backtestForecasts = forecastWeightedMovingAverage(windowValues, {
+      horizon: 1,
+      enableSeasonality: false, // Disable seasonality for backtesting
+    });
+
+    if (backtestForecasts.length > 0) {
+      const backtestForecast = backtestForecasts[0];
+      const err = actualValue - backtestForecast;
+      if (Number.isFinite(err)) {
+        errors.push(err);
+      }
+    }
   }
 
   const rmse =
@@ -1064,10 +1128,10 @@ const generateMovingAverageForecast = (
         )
       : 0;
 
-  // Use shared forecasting utility with full historical series
+  // Use shared forecasting utility with full historical series (winsorized if applicable)
   if (!historicalData.length) return [];
-  const enableSeasonality = historicalData.length >= 24;
-  const fullSeries = seriesData.map((d) => d.value);
+  const enableSeasonality = historicalData.length >= 24; // Align with seasonal factor calculation requirements
+  const fullSeries = series; // Use the winsorized series instead of original values
   const forecasts = forecastWeightedMovingAverage(fullSeries, {
     horizon: 6,
     seasonalFactors,
@@ -1114,7 +1178,7 @@ const generateMovingAverageForecast = (
     console.log("Moving Average Forecast - Final metrics:", {
       rmse,
       forecastHorizon: 6,
-      outliersRemoved: series.length < values.length,
+      outliersAdjusted: series.some((v, i) => v !== values[i]),
       seasonalFactors,
     });
   }
@@ -1173,9 +1237,9 @@ const transformCategoryData = (lineData: LineDataRow[]) => {
   const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
   const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
 
-  const result: any[] = [];
-  let currentDate = new Date(parseInt(firstYear), firstMonthIndex, 1);
-  const endDate = new Date(parseInt(lastYear), lastMonthIndex, 1);
+  const result: MonthlyCategory[] = [];
+  let currentDate = createMonthDate(firstYear, firstMonth);
+  const endDate = createMonthDate(lastYear, lastMonth);
 
   while (currentDate <= endDate) {
     const year = currentDate.getFullYear().toString();
@@ -1969,7 +2033,7 @@ const ForecastPlanning: React.FC = () => {
                           stroke: "#fff",
                         }}
                         activeDot={{
-                          r: 6,
+                          r: 5,
                           fill: "#3b82f6",
                           stroke: "#fff",
                           strokeWidth: 2,
@@ -2128,6 +2192,21 @@ const ForecastPlanning: React.FC = () => {
                     vertical={false}
                     stroke="#e5e7eb"
                   />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickFormatter={(value) => {
+                      const numValue = Number(value) || 0;
+                      return numValue === 0
+                        ? "0k"
+                        : `${(numValue / 1000).toLocaleString("en-US", {
+                            minimumFractionDigits:
+                              (numValue / 1000) % 1 === 0 ? 0 : 2,
+                            maximumFractionDigits: 2,
+                          })}k`;
+                    }}
+                  />
                   <XAxis
                     dataKey="monthLabel"
                     axisLine={false}
@@ -2158,7 +2237,7 @@ const ForecastPlanning: React.FC = () => {
                         return "";
                       const yearGroups: { [key: string]: number[] } = {};
                       projectBurnRatePlotData.forEach(
-                        (item: any, idx: number) => {
+                        (item: ProjectBurnRateData, idx: number) => {
                           const year = item.yearLabel;
                           if (!yearGroups[year]) yearGroups[year] = [];
                           yearGroups[year].push(idx);
@@ -2225,7 +2304,7 @@ const ForecastPlanning: React.FC = () => {
                       strokeWidth: 2,
                       stroke: "#fff",
                     }}
-                    activeDot={{ r: 6, strokeWidth: 0 }}
+                    activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
                     animationDuration={2000}
                     xAxisId="primary"
                   />
@@ -2237,7 +2316,7 @@ const ForecastPlanning: React.FC = () => {
                     strokeDasharray="5 5"
                     strokeWidth={2.5}
                     dot={false}
-                    activeDot={{ r: 5 }}
+                    activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
                     animationDuration={1000}
                     xAxisId="primary"
                   />
@@ -2249,7 +2328,7 @@ const ForecastPlanning: React.FC = () => {
                 const currentData =
                   projectBurnRatePlotData[projectBurnRatePlotData.length - 1];
                 const totalSpend = projectBurnRatePlotData.reduce(
-                  (sum, d) => sum + d.monthly_spend,
+                  (sum, d) => sum + (Number(d.monthly_spend) || 0),
                   0,
                 );
                 const numberOfMonths = projectBurnRatePlotData.length;
@@ -2278,8 +2357,9 @@ const ForecastPlanning: React.FC = () => {
                   currentData.cumulative_spend + averageSpend * remainingMonths;
 
                 return (
-                  projectedSpend > currentData.budget &&
-                  currentData.cumulative_spend <= currentData.budget
+                  projectedSpend > (Number(currentData.budget) || 0) &&
+                  (Number(currentData.cumulative_spend) || 0) <=
+                    (Number(currentData.budget) || 0)
                 );
               })() && (
                 <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-xl flex items-center gap-3 text-orange-700">
@@ -2293,8 +2373,10 @@ const ForecastPlanning: React.FC = () => {
             {projectBurnRatePlotData.length > 0 &&
               projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
                 .cumulative_spend >
-                projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
-                  .budget && (
+                (Number(
+                  projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
+                    .budget,
+                ) || 0) && (
                 <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
                   <AlertCircle className="w-5 h-5 text-red-600 animate-pulse" />
                   <span className="text-sm font-semibold">

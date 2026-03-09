@@ -1579,7 +1579,7 @@ export function CostInsights({
                       title="Cost Distribution by Category"
                       subtitle="Shows spending distribution across categories"
                       delay={0.1}
-                      className="px-8 pt-6 pb-5"
+                      className="px-8 pt-6 pb-8"
                       headerAction={
                         <ul
                           className="recharts-default-legend"
@@ -1821,7 +1821,7 @@ export function CostInsights({
                                         </div>
                                       </div>
                                       <div className="text-right">
-                                        <div className="flex items-end justify-end gap-1">
+                                        <div className="flex items-end justify-between w-full gap-1">
                                           <span className="text-lg font-medium text-gray-900 tracking-tight">
                                             {item.value.toLocaleString(
                                               undefined,
@@ -1836,21 +1836,23 @@ export function CostInsights({
                                             THB
                                           </span>
                                         </div>
-                                        <div className="h-1.5 w-24 bg-gray-100 rounded-full mt-1 overflow-hidden">
-                                          <motion.div
-                                            initial={{ width: 0 }}
-                                            animate={{
-                                              width: percentage + "%",
-                                            }}
-                                            transition={{
-                                              duration: 1,
-                                              delay: 0.5 + index * 0.1,
-                                            }}
-                                            className="h-full rounded-full"
-                                            style={{
-                                              backgroundColor: item.color,
-                                            }}
-                                          ></motion.div>
+                                        <div className="w-32">
+                                          <div className="h-1.5 w-full bg-gray-100 rounded-full mt-1 overflow-hidden">
+                                            <motion.div
+                                              initial={{ width: 0 }}
+                                              animate={{
+                                                width: percentage + "%",
+                                              }}
+                                              transition={{
+                                                duration: 1,
+                                                delay: 0.5 + index * 0.1,
+                                              }}
+                                              className="h-full rounded-full"
+                                              style={{
+                                                backgroundColor: item.color,
+                                              }}
+                                            ></motion.div>
+                                          </div>
                                         </div>
                                       </div>
                                     </div>
@@ -2727,7 +2729,25 @@ export function CostInsights({
                   title="Project Spending"
                   subtitle="Total spending by project"
                   delay={0.1}
-                  className="px-8 pt-6 pb-5"
+                  className="px-8 pt-6 pb-8"
+                  headerAction={
+                    <div className="text-right">
+                      <div className="text-xs font-medium text-gray-600">
+                        Total Amount
+                      </div>
+                      <div className="text-lg font-semibold text-gray-900">
+                        {projectSpendData
+                          .reduce(
+                            (sum, project) => sum + project.totalAmount,
+                            0,
+                          )
+                          .toLocaleString(undefined, {
+                            minimumFractionDigits: 0,
+                            maximumFractionDigits: 2,
+                          })}
+                      </div>
+                    </div>
+                  }
                 >
                   <div className="w-full">
                     {projectSpendData.length === 0 ? (

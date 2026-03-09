@@ -1080,7 +1080,10 @@ export function DataUpload({ onChangeView }: DataUploadProps) {
                   <Button
                     size="lg"
                     className="bg-blue-600 hover:bg-blue-700"
-                    onClick={() => onChangeView("overview")}
+                    onClick={() => {
+                      navigate("/overview");
+                      window.location.reload();
+                    }}
                   >
                     Go to Overview
                   </Button>
