@@ -98,12 +98,17 @@ export async function uploadMultiTableData(
  */
 export async function getSheetDataByName(
   sheetName: string,
+  options?: { forceRefresh?: boolean },
 ): Promise<SheetData> {
   const cacheKey = `sheet_${sheetName}`;
 
   // Check cache first
   const cached = dataCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+  if (
+    cached &&
+    !options?.forceRefresh &&
+    Date.now() - cached.timestamp < 5 * 60 * 1000
+  ) {
     // 5 minutes cache
     return cached.data;
   }
@@ -518,10 +523,10 @@ export async function getSheetNamesDynamic(): Promise<string[]> {
 }
 
 // Minimal no-ops for legacy code that might still call these
-export async function initializeSheetConfigs(): Promise<void> { }
-export async function updateSheetConfigsFromDatabase(): Promise<void> { }
-export function addNewSheet(_name: string): void { }
-export function updateSheetNames(_names: string[]): void { }
+export async function initializeSheetConfigs(): Promise<void> {}
+export async function updateSheetConfigsFromDatabase(): Promise<void> {}
+export function addNewSheet(_name: string): void {}
+export function updateSheetNames(_names: string[]): void {}
 export async function addSheetURL(
   _sheetName: string,
   _gid: string,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Upload,
   RefreshCw,
@@ -119,7 +119,7 @@ export function DataSource() {
   const [syncStatus, setSyncStatus] = useState<
     "connected" | "disconnected" | "syncing"
   >("connected");
-  const [selectedTab, setSelectedTab] = useState<string>("P65019_ปี2565");
+  const [selectedTab, setSelectedTab] = useState<string>("upload_logs");
   const [currentData, setCurrentData] = useState<any[]>([]);
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [filteredSheets, setFilteredSheets] = useState<string[]>([]);
@@ -133,6 +133,12 @@ export function DataSource() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+
+  // Memoize filtered data to prevent unnecessary recalculation
+  const filteredData = useMemo(
+    () => getFilteredDataForSheet(selectedTab, currentData),
+    [selectedTab, currentData],
+  );
 
   // Sheets to display
   const allowedSheets = [
@@ -253,20 +259,6 @@ export function DataSource() {
       }, 3000); // Wait 3 seconds for backend to complete (increased from 2)
     };
 
-    // Listen for data deletion events
-    const handleDataDeleted = (event: CustomEvent) => {
-      console.log("🔄 [DataSource] Data deleted, refreshing all tabs...");
-
-      // Force immediate refresh for deletion
-      handleRefresh().then(() => {
-        // Second refresh to ensure UI is updated
-        setTimeout(() => {
-          console.log("🔄 [DataSource] Second refresh after deletion...");
-          handleRefresh();
-        }, 500);
-      });
-    };
-
     // Listen for data update events
     const handleDataUpdated = (event: CustomEvent) => {
       console.log("🔄 [DataSource] Data updated, refreshing current tab...");
@@ -285,7 +277,6 @@ export function DataSource() {
       "dataUploaded",
       handleDataUploaded as EventListener,
     );
-    window.addEventListener("dataDeleted", handleDataDeleted as EventListener);
     window.addEventListener("dataUpdated", handleDataUpdated as EventListener);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
@@ -314,10 +305,6 @@ export function DataSource() {
       window.removeEventListener(
         "dataUploaded",
         handleDataUploaded as EventListener,
-      );
-      window.removeEventListener(
-        "dataDeleted",
-        handleDataDeleted as EventListener,
       );
       window.removeEventListener(
         "dataUpdated",
@@ -379,6 +366,8 @@ export function DataSource() {
     console.log(`🔄 [DEBUG] Refreshing data for current tab: ${selectedTab}`);
 
     try {
+      setLoading(true);
+      setSelectedRows(new Set());
       setSyncStatus("syncing");
 
       // Clear any cached data first
@@ -392,7 +381,9 @@ export function DataSource() {
       console.log(`📊 [DEBUG] Fetching data for sheet: ${selectedTab}`);
 
       // Add timeout for large datasets
-      const dataPromise = getSheetDataByName(selectedTab);
+      const dataPromise = getSheetDataByName(selectedTab, {
+        forceRefresh: true,
+      });
       const timeoutPromise = new Promise(
         (_, reject) =>
           setTimeout(() => reject(new Error("Timeout fetching data")), 45000), // 45 seconds
@@ -478,6 +469,7 @@ export function DataSource() {
       );
 
       setSyncStatus("connected");
+      setLoading(false);
       console.log(`✅ [DEBUG] Refresh completed for ${selectedTab}`);
 
       // Force another re-render to ensure UI updates
@@ -491,6 +483,7 @@ export function DataSource() {
         error,
       );
       setSyncStatus("disconnected");
+      setLoading(false); // Added setLoading(false) here
 
       // Show error details to user
       const errorMessage =
@@ -620,55 +613,9 @@ export function DataSource() {
     }
 
     try {
-      // 🚀 OPTIMISTIC UI - Remove from UI immediately
-      console.log("⚡ [OPTIMISTIC] Removing file from UI immediately...");
-      console.log("🔍 [DEBUG] Filename to delete:", JSON.stringify(filename));
-      console.log(
-        "🔍 [DEBUG] Current data before deletion:",
-        currentData.map((row) => row["Source File"]),
-      );
-
-      // Remove row from UI immediately using correct field name "Source File"
-      const filteredCurrentData = currentData.filter(
-        (row) => row["Source File"] !== filename,
-      );
-      const filteredSheetData = sheetData.filter(
-        (row) => row["Source File"] !== filename,
-      );
-
-      console.log(
-        "🔍 [DEBUG] Filtered current data:",
-        filteredCurrentData.map((row) => row["Source File"]),
-      );
-      console.log(
-        "🔍 [DEBUG] Filtered sheet data:",
-        filteredSheetData.map((row) => row["Source File"]),
-      );
-      console.log(
-        "🔍 [DEBUG] Current data length:",
-        currentData.length,
-        "->",
-        filteredCurrentData.length,
-      );
-      console.log(
-        "🔍 [DEBUG] Sheet data length:",
-        sheetData.length,
-        "->",
-        filteredSheetData.length,
-      );
-
-      setCurrentData(filteredCurrentData);
-      setSheetData(filteredSheetData);
-
-      // Force re-render to show immediate change
-      setForceUpdate((prev) => prev + 1);
-
-      // Show success message immediately
-      console.log("✅ [OPTIMISTIC] File removed from UI instantly");
-
-      // Now sync with backend in background
-      console.log("🔄 [DEBUG] Syncing with backend...");
+      // Set syncing status
       setSyncStatus("syncing");
+      console.log("� [DEBUG] Deleting file from backend:", filename);
 
       // Call the backend endpoint
       const result = await deleteFileData(filename);
@@ -688,66 +635,28 @@ export function DataSource() {
         );
 
       if (hasErrors || totalDeleted === 0) {
-        console.warn(
-          "⚠️ [DEBUG] Backend deletion failed - reverting UI change",
-        );
-
-        // Revert the optimistic UI change if backend failed
+        console.warn("⚠️ [DEBUG] Backend deletion failed");
         alert(`การลบข้อมูลมีปัญหาบางส่วน\nกรุณาตรวจสอบข้อมูลและลองใหม่`);
-
-        // Refresh data to get correct state
-        await handleRefresh();
         setSyncStatus("disconnected");
         return;
       }
 
-      // Backend deletion successful - keep the optimistic change
-      console.log(
-        "✅ [DEBUG] Backend deletion successful - optimistic UI confirmed",
-      );
+      // Backend deletion successful - refresh data
+      console.log("✅ [DEBUG] Backend deletion successful - refreshing data");
 
-      // Update data items with new counts
-      const realRecords = currentData.length;
-      const realSize = (
-        JSON.stringify(currentData).length /
-        1024 /
-        1024
-      ).toFixed(2);
-      const currentTime = new Date().toLocaleString();
-
-      setDataItems((prev) =>
-        prev.map((item) =>
-          item.id === "1"
-            ? {
-                ...item,
-                records: realRecords,
-                size: `${realSize} MB`,
-                lastUpdated: currentTime,
-              }
-            : item,
-        ),
-      );
-
-      setSyncStatus("connected");
-      setSelectedRows(new Set());
-
-      // Dispatch event for other components
-      window.dispatchEvent(
-        new CustomEvent("dataDeleted", { detail: { success: true, filename } }),
-      );
-
-      console.log("🎉 [SUCCESS] Optimistic deletion completed successfully");
-    } catch (error) {
-      console.error(
-        "❌ [ERROR] Backend deletion failed - reverting UI change:",
-        error,
-      );
-
-      // Revert the optimistic UI change if backend error
-      alert("เกิดข้อผิดพลาดในการลบไฟล์ กำลังกู้คืนข้อมูล...");
-
-      // Refresh data to get correct state
       await handleRefresh();
+
+      // Automatically exit Edit Mode and return to normal view
+      setIsEditMode(false);
+      setSelectedRows(new Set());
+      setSyncStatus("connected");
+
+      console.log("🎉 [SUCCESS] File deletion completed successfully");
+    } catch (error) {
+      console.error("❌ [ERROR] Backend deletion failed:", error);
+
+      // Show error message
+      alert("เกิดข้อผิดพลาดในการลบไฟล์ กรุณาลองใหม่");
       setSyncStatus("disconnected");
     }
   };
@@ -896,11 +805,12 @@ export function DataSource() {
                 <>
                   <button
                     onClick={handleEditData}
+                    disabled={syncStatus === "syncing"}
                     className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
                       isEditMode
                         ? "bg-gray-600 text-white hover:bg-gray-700"
                         : "bg-blue-600 text-white hover:bg-blue-700"
-                    }`}
+                    } ${syncStatus === "syncing" ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     {isEditMode ? (
                       <>
@@ -941,8 +851,10 @@ export function DataSource() {
                         // Delete the selected file (confirmation is in handleDeleteFile)
                         handleDeleteFile(selectedFiles[0]);
                       }}
-                      disabled={selectedRows.size === 0}
-                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+                      disabled={
+                        selectedRows.size === 0 || syncStatus === "syncing"
+                      }
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Trash size={16} />
                       Delete File
@@ -965,193 +877,171 @@ export function DataSource() {
                   <RefreshCw className="animate-spin mr-2" size={20} />
                   <span>Loading data...</span>
                 </div>
-              ) : (
-                (() => {
-                  const filteredData = getFilteredDataForSheet(
-                    selectedTab,
-                    currentData,
-                  );
-                  return filteredData.length > 0 ? (
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="overflow-x-auto overflow-y-auto max-h-96">
-                        <table
-                          className="w-full text-sm sticky top-0 bg-white"
-                          key={`${selectedTab}-${forceUpdate}`} // Force re-render when data changes
-                        >
-                          <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
-                            <tr>
-                              {selectedTab === "upload_logs" && isEditMode && (
-                                <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 w-12">
-                                  {/* No select all checkbox for single selection mode */}
-                                </th>
-                              )}
-                              {Object.keys(filteredData[0]).map(
-                                (header, index) => (
-                                  <th
-                                    key={index}
-                                    className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 ${
-                                      header.toLowerCase() === "item code"
-                                        ? "min-w-[80px] max-w-[120px]"
-                                        : header.toLowerCase() ===
-                                              "po number" ||
-                                            header.toLowerCase() ===
-                                              "source file"
-                                          ? "min-w-[120px] max-w-[180px]"
-                                          : "min-w-[120px] max-w-[200px]"
-                                    } text-center`}
-                                  >
-                                    <span
-                                      className="block truncate"
-                                      title={header}
-                                    >
-                                      {header}
-                                    </span>
-                                  </th>
-                                ),
-                              )}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-200">
-                            {filteredData.map((row, rowIndex) => (
-                              <tr
-                                key={rowIndex}
-                                className="hover:bg-gray-50 transition-colors cursor-default"
-                              >
-                                {selectedTab === "upload_logs" &&
-                                  isEditMode && (
-                                    <td className="px-4 py-3 border-r border-gray-200">
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedRows.has(rowIndex)}
-                                        onChange={(e) => {
-                                          if (e.target.checked) {
-                                            // Select only this row (clear previous selection)
-                                            setSelectedRows(
-                                              new Set([rowIndex]),
-                                            );
-                                          } else {
-                                            // Deselect this row
-                                            setSelectedRows(new Set());
-                                          }
-                                        }}
-                                        className="rounded border-gray-300"
-                                      />
-                                    </td>
-                                  )}
-                                {Object.values(row).map((value, colIndex) => (
-                                  <td
-                                    key={colIndex}
-                                    className={`px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 ${
-                                      Object.keys(filteredData[0])[
-                                        colIndex
-                                      ].toLowerCase() === "description"
-                                        ? "max-w-xs truncate"
-                                        : Object.keys(filteredData[0])[
-                                              colIndex
-                                            ].toLowerCase() === "po number" ||
-                                            Object.keys(filteredData[0])[
-                                              colIndex
-                                            ].toLowerCase() === "source file"
-                                          ? "max-w-[180px] truncate"
-                                          : "whitespace-nowrap"
-                                    } ${
-                                      [
-                                        "category",
-                                        "quantity",
-                                        "unit",
-                                        "project",
-                                        "sourcesheet",
-                                        "total records",
-                                      ].includes(
+              ) : filteredData.length > 0 ? (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto overflow-y-auto max-h-96">
+                    <table className="w-full text-sm sticky top-0 bg-white">
+                      <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
+                        <tr>
+                          {selectedTab === "upload_logs" && isEditMode && (
+                            <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 w-12">
+                              {/* No select all checkbox for single selection mode */}
+                            </th>
+                          )}
+                          {Object.keys(filteredData[0]).map((header, index) => (
+                            <th
+                              key={index}
+                              className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 ${
+                                header.toLowerCase() === "item code"
+                                  ? "min-w-[80px] max-w-[120px]"
+                                  : header.toLowerCase() === "po number" ||
+                                      header.toLowerCase() === "source file"
+                                    ? "min-w-[120px] max-w-[180px]"
+                                    : "min-w-[120px] max-w-[200px]"
+                              } text-center`}
+                            >
+                              <span className="block truncate" title={header}>
+                                {header}
+                              </span>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {filteredData.map((row, rowIndex) => (
+                          <tr
+                            key={`${row["Source File"]}-${rowIndex}`}
+                            className="hover:bg-gray-50 transition-colors cursor-default"
+                          >
+                            {selectedTab === "upload_logs" && isEditMode && (
+                              <td className="px-4 py-3 border-r border-gray-200">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedRows.has(rowIndex)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      // Select only this row (clear previous selection)
+                                      setSelectedRows(new Set([rowIndex]));
+                                    } else {
+                                      // Deselect this row
+                                      setSelectedRows(new Set());
+                                    }
+                                  }}
+                                  className="rounded border-gray-300"
+                                />
+                              </td>
+                            )}
+                            {Object.values(row).map((value, colIndex) => (
+                              <td
+                                key={colIndex}
+                                className={`px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 ${
+                                  Object.keys(filteredData[0])[
+                                    colIndex
+                                  ].toLowerCase() === "description"
+                                    ? "max-w-xs truncate"
+                                    : Object.keys(filteredData[0])[
+                                          colIndex
+                                        ].toLowerCase() === "po number" ||
                                         Object.keys(filteredData[0])[
                                           colIndex
-                                        ].toLowerCase(),
-                                      )
-                                        ? "text-center"
-                                        : ""
-                                    }`}
-                                  >
-                                    {(() => {
-                                      const headerKey = Object.keys(
-                                        filteredData[0],
-                                      )[colIndex].toLowerCase();
-                                      const stringValue =
-                                        value?.toString() || "";
+                                        ].toLowerCase() === "source file"
+                                      ? "max-w-[180px] truncate"
+                                      : "whitespace-nowrap"
+                                } ${
+                                  [
+                                    "category",
+                                    "quantity",
+                                    "unit",
+                                    "project",
+                                    "sourcesheet",
+                                    "total records",
+                                  ].includes(
+                                    Object.keys(filteredData[0])[
+                                      colIndex
+                                    ].toLowerCase(),
+                                  )
+                                    ? "text-center"
+                                    : ""
+                                }`}
+                              >
+                                {(() => {
+                                  const headerKey = Object.keys(
+                                    filteredData[0],
+                                  )[colIndex].toLowerCase();
+                                  const stringValue = value?.toString() || "";
 
-                                      if (headerKey === "description") {
-                                        return (
-                                          <span title={stringValue}>
-                                            {stringValue.substring(0, 50) +
-                                              (stringValue.length > 50
-                                                ? "..."
-                                                : "")}
-                                          </span>
-                                        );
-                                      }
+                                  if (headerKey === "description") {
+                                    return (
+                                      <span title={stringValue}>
+                                        {stringValue.substring(0, 50) +
+                                          (stringValue.length > 50
+                                            ? "..."
+                                            : "")}
+                                      </span>
+                                    );
+                                  }
 
-                                      if (
-                                        headerKey === "po number" ||
-                                        headerKey === "source file"
-                                      ) {
-                                        return (
-                                          <span
-                                            title={stringValue}
-                                            className="block truncate"
-                                          >
-                                            {stringValue}
-                                          </span>
-                                        );
-                                      }
+                                  if (
+                                    headerKey === "po number" ||
+                                    headerKey === "source file"
+                                  ) {
+                                    return (
+                                      <span
+                                        title={stringValue}
+                                        className="block truncate"
+                                      >
+                                        {stringValue}
+                                      </span>
+                                    );
+                                  }
 
-                                      if (headerKey === "category") {
-                                        if (!stringValue || stringValue === "-")
-                                          return "";
-                                        return (
-                                          <span
-                                            className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                              stringValue === "Service"
-                                                ? "bg-green-100 text-green-700"
-                                                : stringValue === "Material"
-                                                  ? "bg-blue-100 text-blue-700"
-                                                  : "bg-gray-100 text-gray-700"
-                                            }`}
-                                          >
-                                            {stringValue}
-                                          </span>
-                                        );
-                                      }
+                                  if (headerKey === "category") {
+                                    if (!stringValue || stringValue === "-")
+                                      return "";
+                                    return (
+                                      <span
+                                        className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                          stringValue === "Service"
+                                            ? "bg-green-100 text-green-700"
+                                            : stringValue === "Material"
+                                              ? "bg-blue-100 text-blue-700"
+                                              : "bg-gray-100 text-gray-700"
+                                        }`}
+                                      >
+                                        {stringValue}
+                                      </span>
+                                    );
+                                  }
 
-                                      if (
-                                        [
-                                          "unit price",
-                                          "net amount",
-                                          "discount",
-                                          "vat",
-                                          "total amount",
-                                          "quantity",
-                                          "total vat",
-                                          "total price",
-                                        ].includes(headerKey)
-                                      ) {
-                                        return formatNumberWithCommas(value);
-                                      }
+                                  if (
+                                    [
+                                      "unit price",
+                                      "net amount",
+                                      "discount",
+                                      "vat",
+                                      "total amount",
+                                      "quantity",
+                                      "total vat",
+                                      "total price",
+                                    ].includes(headerKey)
+                                  ) {
+                                    return formatNumberWithCommas(value);
+                                  }
 
-                                      return stringValue;
-                                    })()}
-                                  </td>
-                                ))}
-                              </tr>
+                                  return stringValue;
+                                })()}
+                              </td>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      No data available
-                    </div>
-                  );
-                })()
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  No data available
+                </div>
               )}
             </div>
           </ChartContainer>
