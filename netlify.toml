@@ -6,6 +6,14 @@
   NODE_VERSION = "18"
   NPM_FLAGS = "--include=dev"
 
+[functions]
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
