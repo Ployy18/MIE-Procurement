@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import {
   LineChart,
   Line,
@@ -14,10 +15,6 @@ import {
 
 // Lucide Icons
 import {
-  FileText,
-  Activity,
-  CreditCard,
-  DollarSign,
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
@@ -41,17 +38,316 @@ import { ChartContainer } from "./ChartContainer";
 import { LoadingState } from "./ui/LoadingState";
 
 // Services
-import {
-  getTab1Data,
-  getTab2Data,
-  getSheetDataByName,
-} from "../../services/googleSheetsService";
+import { getSheetDataByName } from "../../services/googleSheetsService";
 
 export function ProcurementOverview({
   filters,
 }: {
   filters: { year: string; project: string };
 }) {
+  // Utility functions
+  const extractYearFromDate = (
+    dateStr: string | undefined | null,
+  ): number | null => {
+    if (!dateStr) return null;
+
+    let year: number;
+    if (dateStr.includes("/")) {
+      // Format: DD/MM/YYYY or DD/MM/YY
+      const parts = dateStr.split("/");
+      year = parseInt(parts[2]);
+    } else if (dateStr.includes("-")) {
+      // Format: YYYY-MM-DD
+      const parts = dateStr.split("-");
+      year = parseInt(parts[0]);
+    } else {
+      return null;
+    }
+
+    return isNaN(year) ? null : year;
+  };
+
+  const extractMonthYearFromDate = (
+    dateStr: string | undefined | null,
+  ): string | null => {
+    if (!dateStr) return null;
+
+    let year: number, month: number;
+    if (dateStr.includes("/")) {
+      // Format: DD/MM/YYYY or DD/MM/YY
+      const parts = dateStr.split("/");
+      year = parseInt(parts[2]);
+      month = parseInt(parts[1]);
+    } else if (dateStr.includes("-")) {
+      // Format: YYYY-MM-DD
+      const parts = dateStr.split("-");
+      year = parseInt(parts[0]);
+      month = parseInt(parts[1]);
+    } else {
+      return null;
+    }
+
+    if (isNaN(year) || isNaN(month)) return null;
+
+    return `${year}-${month < 10 ? "0" : ""}${month}`;
+  };
+
+  const parseDate = (dateStr: string) => {
+    if (!dateStr) return 0;
+
+    if (dateStr.includes("/")) {
+      const [day, month, year] = dateStr.split("/");
+      const y = Number(year) > 2400 ? Number(year) - 543 : Number(year);
+
+      return new Date(y, Number(month) - 1, Number(day)).getTime();
+    }
+
+    return new Date(dateStr).getTime();
+  };
+
+  // Main data fetching function
+  const fetchPOData = async () => {
+    try {
+      setLoading(true);
+      // Fetch data from specific sheets with forceRefresh for navigation
+      const [headDataResponse, lineDataResponse] = await Promise.all([
+        getSheetDataByName("procurement_head", { forceRefresh: true }),
+        getSheetDataByName("procurement_line", { forceRefresh: true }),
+      ]);
+
+      const headRows = headDataResponse.rows || [];
+      const lineRows = lineDataResponse.rows || [];
+
+      // 1. Project Filter (for Yearly Overview)
+      let projectFilteredHead = headRows;
+      if (filters.project !== "all") {
+        projectFilteredHead = projectFilteredHead.filter(
+          (row: any) => row.Project === filters.project,
+        );
+      }
+
+      // 2. Further filter by Year (for everything else)
+      let filteredHead = projectFilteredHead;
+      if (filters.year !== "all") {
+        filteredHead = filteredHead.filter((row: any) => {
+          const year = extractYearFromDate(row.Date);
+          return year !== null && year.toString() === filters.year;
+        });
+      }
+
+      // Apply filters to lineRows (for Category Costs and Charts)
+      let filteredLine = lineRows;
+      if (filters.year !== "all") {
+        filteredLine = filteredLine.filter((row: any) => {
+          const year = extractYearFromDate(row.Date);
+          return year !== null && year.toString() === filters.year;
+        });
+      }
+      if (filters.project !== "all") {
+        filteredLine = filteredLine.filter(
+          (row: any) => row.Project === filters.project,
+        );
+      }
+
+      // 3. Single reduce pass for all category costs and category spend
+      const categoryStats = filteredLine.reduce(
+        (
+          acc: {
+            serviceTotal: number;
+            materialTotal: number;
+            otherTotal: number;
+            categorySpend: Record<string, number>;
+          },
+          row: any,
+        ) => {
+          const category = row.Category || "Other";
+          const amount = parseFloat(row["Total Amount"]) || 0;
+
+          // Update category totals
+          if (category === "Service") {
+            acc.serviceTotal += amount;
+          } else if (category === "Material") {
+            acc.materialTotal += amount;
+          } else {
+            acc.otherTotal += amount;
+          }
+
+          // Update category spend map
+          acc.categorySpend[category] =
+            (acc.categorySpend[category] || 0) + amount;
+
+          return acc;
+        },
+        {
+          serviceTotal: 0,
+          materialTotal: 0,
+          otherTotal: 0,
+          categorySpend: {},
+        },
+      );
+
+      // 4. KPI Calculations
+      const uniquePOs = new Set(
+        filteredHead.map((row: any) => row["PO Number"]).filter(Boolean),
+      );
+      setUniquePOCount(uniquePOs.size);
+
+      const total = filteredHead.reduce(
+        (sum: number, row: any) => sum + (parseFloat(row["Total Amount"]) || 0),
+        0,
+      );
+      setTotalAmount(total);
+
+      setTotalServiceCosts(categoryStats.serviceTotal);
+      setTotalMaterialCosts(categoryStats.materialTotal);
+      setTotalOtherCosts(categoryStats.otherTotal);
+
+      // 5. Process monthly expense data from procurement_head
+      const monthlyExpenseMap = filteredHead.reduce(
+        (acc: Record<string, number>, row: any) => {
+          const monthYear = extractMonthYearFromDate(row.Date);
+          if (monthYear) {
+            const amount = parseFloat(row["Total Amount"]) || 0;
+            acc[monthYear] = (acc[monthYear] || 0) + amount;
+          }
+          return acc;
+        },
+        {},
+      );
+
+      const sortedMonthlyData = Object.keys(monthlyExpenseMap)
+        .sort()
+        .map((monthYear) => {
+          const [year, month] = monthYear.split("-");
+          const months = [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+          ];
+          const fullMonths = [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+          ];
+          const mIdx = parseInt(month) - 1;
+          return {
+            name: months[mIdx],
+            monthLabel: months[mIdx].slice(0, 3),
+            fullName: fullMonths[mIdx],
+            year: year,
+            value: monthlyExpenseMap[monthYear],
+            showYear: false,
+            yearLabel: "", // Will be set below
+          };
+        });
+
+      // Mark year labels (Centered under year's months)
+      const yearGroups: Record<string, number[]> = {};
+      sortedMonthlyData.forEach((item, index) => {
+        if (!yearGroups[item.year]) yearGroups[item.year] = [];
+        yearGroups[item.year].push(index);
+      });
+
+      // Set yearLabel for the middle index of each year group
+      Object.entries(yearGroups).forEach(([year, indices]) => {
+        const midIdx = indices[Math.floor(indices.length / 2)];
+        sortedMonthlyData[midIdx].yearLabel = year;
+      });
+
+      setMonthlyExpenseData(sortedMonthlyData);
+
+      // 5. Process yearly expense data from projectFilteredHead
+      const yearlyExpenseMap = projectFilteredHead.reduce(
+        (acc: Record<string, number>, row: any) => {
+          const year = extractYearFromDate(row.Date);
+
+          if (year) {
+            const amount = parseFloat(row["Total Amount"]) || 0;
+            acc[year] = (acc[year] || 0) + amount;
+          }
+
+          return acc;
+        },
+        {},
+      );
+
+      const sortedYearlyData = Object.keys(yearlyExpenseMap)
+        .sort()
+        .map((year) => ({
+          name: year,
+          value: yearlyExpenseMap[year],
+        }));
+
+      setYearlyExpenseData(sortedYearlyData);
+
+      // 6. Supplier Data
+      const supplierMap = filteredHead.reduce((acc: any, row: any) => {
+        const supplier = row.Supplier;
+        const amount = parseFloat(row["Total Amount"]) || 0;
+        const poNumber = row["PO Number"];
+
+        if (!acc[supplier]) {
+          acc[supplier] = {
+            supplier: supplier,
+            totalAmount: 0,
+            poNumbers: new Set(),
+          };
+        }
+
+        acc[supplier].totalAmount += amount;
+
+        if (poNumber) {
+          acc[supplier].poNumbers.add(poNumber);
+        }
+
+        return acc;
+      }, {});
+
+      const sortedSuppliers = Object.values(supplierMap)
+        .map((supplier: any) => ({
+          name: supplier.supplier,
+          totalAmount: supplier.totalAmount,
+          poCount: supplier.poNumbers.size,
+        }))
+        .sort((a: any, b: any) => b.totalAmount - a.totalAmount);
+
+      setSupplierData(sortedSuppliers);
+
+      // 7. Category Data
+      const sortedCategories = Object.entries(categoryStats.categorySpend)
+        .map(([category, amount]) => ({
+          category,
+          total: amount as number,
+        }))
+        .sort((a, b) => (b.total as number) - (a.total as number));
+
+      setCategoryData(sortedCategories);
+      setCurrentPage(1);
+    } catch (error) {
+      console.error("Error processing procurement data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const location = useLocation();
   const [uniquePOCount, setUniquePOCount] = useState<number>(0);
   const [totalAmount, setTotalAmount] = useState<number>(0);
   const [totalServiceCosts, setTotalServiceCosts] = useState<number>(0);
@@ -61,337 +357,33 @@ export function ProcurementOverview({
   const [supplierData, setSupplierData] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const itemsPerPage = 10;
   const [selectedSupplierPOs, setSelectedSupplierPOs] = useState<any[]>([]);
   const [showPOModal, setShowPOModal] = useState(false);
   const [loadingPOs, setLoadingPOs] = useState(false);
+  const [selectedSupplierName, setSelectedSupplierName] = useState("");
   const [previousYearData, setPreviousYearData] = useState<any[]>([]);
   const [categoryData, setCategoryData] = useState<any[]>([]);
   const [chartView, setChartView] = useState<"month" | "year">("month");
   const [yearlyExpenseData, setYearlyExpenseData] = useState<any[]>([]);
 
-  // No longer using local filter state, using props directly
-
   useEffect(() => {
-    const fetchPOData = async () => {
-      try {
-        setLoading(true);
-        // Fetch data from specific sheets
-        const [headDataResponse, lineDataResponse] = await Promise.all([
-          getSheetDataByName("procurement_head"),
-          getSheetDataByName("procurement_line"),
-        ]);
+    fetchPOData();
+  }, [filters.year, filters.project, location.pathname]);
 
-        const headRows = headDataResponse.rows || [];
-        const lineRows = lineDataResponse.rows || [];
-
-        // 1. Project Filter (for Yearly Overview)
-        let projectFilteredHead = headRows;
-        if (filters.project !== "all") {
-          projectFilteredHead = projectFilteredHead.filter(
-            (row: any) => row.Project === filters.project,
-          );
-        }
-
-        // 2. Further filter by Year (for everything else)
-        let filteredHead = projectFilteredHead;
-        if (filters.year !== "all") {
-          filteredHead = filteredHead.filter((row: any) => {
-            const dateStr = row.Date;
-            if (dateStr) {
-              let year;
-              if (dateStr.includes("/")) {
-                const parts = dateStr.split("/");
-                year = parseInt(parts[2]);
-              } else if (dateStr.includes("-")) {
-                const parts = dateStr.split("-");
-                year = parseInt(parts[0]);
-              } else {
-                return false;
-              }
-              return year.toString() === filters.year;
-            }
-            return false;
-          });
-        }
-
-        // Apply filters to lineRows (for Category Costs and Charts)
-        let filteredLine = lineRows;
-        if (filters.year !== "all") {
-          filteredLine = filteredLine.filter((row: any) => {
-            const dateStr = row.Date;
-            if (dateStr) {
-              let year;
-              if (dateStr.includes("/")) {
-                const parts = dateStr.split("/");
-                year = parseInt(parts[2]);
-              } else if (dateStr.includes("-")) {
-                const parts = dateStr.split("-");
-                year = parseInt(parts[0]);
-              } else {
-                return false;
-              }
-              return year.toString() === filters.year;
-            }
-            return false;
-          });
-        }
-        if (filters.project !== "all") {
-          filteredLine = filteredLine.filter(
-            (row: any) => row.Project === filters.project,
-          );
-        }
-
-        // 1. KPI Calculations (as requested by user)
-        // Purchase Order Count from procurement_head
-        const uniquePOs = new Set(
-          filteredHead.map((row: any) => row["PO Number"]).filter(Boolean),
-        );
-        setUniquePOCount(uniquePOs.size);
-
-        // Total Amount from procurement_head
-        const total = filteredHead.reduce(
-          (sum: number, row: any) =>
-            sum + (parseFloat(row["Total Amount"]) || 0),
-          0,
-        );
-        setTotalAmount(total);
-
-        // Total Service Cost from procurement_line (Category = Service)
-        const serviceTotal = filteredLine.reduce((sum: number, row: any) => {
-          if (row.Category === "Service") {
-            return sum + (parseFloat(row["Total Amount"]) || 0);
-          }
-          return sum;
-        }, 0);
-        setTotalServiceCosts(serviceTotal);
-
-        // Total Material Cost from procurement_line (Category = Material)
-        const materialTotal = filteredLine.reduce((sum: number, row: any) => {
-          if (row.Category === "Material") {
-            return sum + (parseFloat(row["Total Amount"]) || 0);
-          }
-          return sum;
-        }, 0);
-        setTotalMaterialCosts(materialTotal);
-
-        // Total Other Cost from procurement_line (Category = Other)
-        const otherTotal = filteredLine.reduce((sum: number, row: any) => {
-          if (row.Category === "Other") {
-            return sum + (parseFloat(row["Total Amount"]) || 0);
-          }
-          return sum;
-        }, 0);
-
-        setTotalOtherCosts(otherTotal);
-
-        // Use filteredHead for monthly expense data and supplier statistics
-        const dashboardData = filteredHead;
-
-        // 2. Process monthly expense data from procurement_head
-        const monthlyExpenseMap = dashboardData.reduce(
-          (acc: Record<string, number>, row: any) => {
-            const dateStr = row.Date;
-            if (dateStr) {
-              // Extract year and month directly from string to avoid Date() conversion
-              let year, month;
-
-              // Handle different date formats: DD/MM/YYYY, YYYY-MM-DD, etc.
-              if (dateStr.includes("/")) {
-                // Format: DD/MM/YYYY or DD/MM/YY
-                const parts = dateStr.split("/");
-                year = parseInt(parts[2]);
-                month = parseInt(parts[1]);
-              } else if (dateStr.includes("-")) {
-                // Format: YYYY-MM-DD
-                const parts = dateStr.split("-");
-                year = parseInt(parts[0]);
-                month = parseInt(parts[1]);
-              } else {
-                // Skip invalid format
-                return acc;
-              }
-
-              // Year is already in BE format, use as-is
-              const monthYear = `${year}-${month < 10 ? "0" : ""}${month}`;
-              const amount = parseFloat(row["Total Amount"]) || 0;
-
-              acc[monthYear] = (acc[monthYear] || 0) + amount;
-            }
-            return acc;
-          },
-          {},
-        );
-
-        const sortedMonthlyData = Object.keys(monthlyExpenseMap)
-          .sort()
-          .map((monthYear) => {
-            const [year, month] = monthYear.split("-");
-            const months = [
-              "Jan",
-              "Feb",
-              "Mar",
-              "Apr",
-              "May",
-              "Jun",
-              "Jul",
-              "Aug",
-              "Sep",
-              "Oct",
-              "Nov",
-              "Dec",
-            ];
-            const fullMonths = [
-              "January",
-              "February",
-              "March",
-              "April",
-              "May",
-              "June",
-              "July",
-              "August",
-              "September",
-              "October",
-              "November",
-              "December",
-            ];
-
-            const mIdx = parseInt(month) - 1;
-            return {
-              name: months[mIdx],
-              monthLabel: months[mIdx].slice(0, 3),
-              fullName: fullMonths[mIdx],
-              year: year,
-              value: monthlyExpenseMap[monthYear],
-              showYear: false,
-              yearLabel: "", // New field for centered labels
-            };
-          });
-
-        // Mark year labels (Centered under year's months)
-        const yearGroups: Record<string, number[]> = {};
-        sortedMonthlyData.forEach((item, index) => {
-          if (!yearGroups[item.year]) yearGroups[item.year] = [];
-          yearGroups[item.year].push(index);
-        });
-
-        // Set yearLabel for the middle index of each year group
-        Object.entries(yearGroups).forEach(([year, indices]) => {
-          const midIdx = indices[Math.floor(indices.length / 2)];
-          sortedMonthlyData[midIdx].yearLabel = year;
-        });
-
-        setMonthlyExpenseData(sortedMonthlyData);
-
-        // 3. Process yearly expense data from projectFilteredHead (Ignores Year filter)
-        const yearlyExpenseMap = projectFilteredHead.reduce(
-          (acc: Record<string, number>, row: any) => {
-            const dateStr = row.Date;
-            if (dateStr) {
-              let year;
-              if (dateStr.includes("/")) {
-                const parts = dateStr.split("/");
-                year = parts[2];
-              } else if (dateStr.includes("-")) {
-                const parts = dateStr.split("-");
-                year = parts[0];
-              } else {
-                return acc;
-              }
-              const amount = parseFloat(row["Total Amount"]) || 0;
-              acc[year] = (acc[year] || 0) + amount;
-            }
-            return acc;
-          },
-          {},
-        );
-
-        const sortedYearlyData = Object.keys(yearlyExpenseMap)
-          .sort()
-          .map((year) => ({
-            name: year,
-            value: yearlyExpenseMap[year],
-          }));
-
-        setYearlyExpenseData(sortedYearlyData);
-
-        // 4. Supplier Statistics
-        const supplierStats = dashboardData.reduce(
-          (acc: Record<string, any>, row: any) => {
-            const name = row.Supplier || "Unknown";
-            const amount = parseFloat(row["Total Amount"]) || 0;
-
-            if (!acc[name]) {
-              acc[name] = {
-                name,
-                totalAmount: 0,
-                poCount: 0,
-                poNumbers: new Set(),
-              };
-            }
-            acc[name].totalAmount += amount;
-            acc[name].poNumbers.add(row["PO Number"]);
-            acc[name].poCount = acc[name].poNumbers.size;
-            return acc;
-          },
-          {},
-        );
-
-        const suppliersWithStats = Object.values(supplierStats)
-          .map((s: any) => {
-            const grandTotal = dashboardData.reduce(
-              (sum: number, row: any) =>
-                sum + (parseFloat(row["Total Amount"]) || 0),
-              0,
-            );
-            return {
-              name: s.name,
-              totalAmount: s.totalAmount,
-              poCount: s.poCount,
-              spendShare: parseFloat(
-                ((s.totalAmount / (grandTotal || 1)) * 100).toFixed(1),
-              ),
-              growthRate: 0,
-            };
-          })
-          .sort((a, b) => b.totalAmount - a.totalAmount);
-
-        setSupplierData(suppliersWithStats);
-
-        const categorySpend = filteredLine.reduce(
-          (acc: Record<string, number>, row: any) => {
-            const cat = row.Category || "Other";
-            const amount = parseFloat(row["Total Amount"]) || 0;
-            acc[cat] = (acc[cat] || 0) + amount;
-            return acc;
-          },
-          {},
-        );
-
-        // Sort categories in specific order: Service, Material, Other
-        const categoryOrder = ["Service", "Material", "Other"];
-        const sortedCategories = Object.entries(categorySpend)
-          .map(([category, total]) => ({ category, total }))
-          .sort((a, b) => {
-            const aIndex = categoryOrder.indexOf(a.category);
-            const bIndex = categoryOrder.indexOf(b.category);
-            if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-            if (aIndex !== -1) return -1;
-            if (bIndex !== -1) return 1;
-            return a.category.localeCompare(b.category);
-          });
-
-        setCategoryData(sortedCategories);
-        setCurrentPage(1);
-      } catch (error) {
-        console.error("Error processing procurement data:", error);
-      } finally {
-        setLoading(false);
-      }
+  // Listen for data updates from DataSource
+  useEffect(() => {
+    const handleDataUpdate = () => {
+      console.log("🔄 [ProcurementOverview] Data updated, refreshing...");
+      fetchPOData();
     };
 
-    fetchPOData();
-  }, [filters]);
+    window.addEventListener("dataUpdated", handleDataUpdate);
+
+    return () => {
+      window.removeEventListener("dataUpdated", handleDataUpdate);
+    };
+  }, []);
 
   // Function to fetch PO details for a specific supplier
   const fetchSupplierPOs = async (supplierName: string) => {
@@ -501,8 +493,7 @@ export function ProcurementOverview({
       );
 
       const sortedPOs = Object.values(poGroups).sort(
-        (a: any, b: any) =>
-          new Date(b.date).getTime() - new Date(a.date).getTime(),
+        (a: any, b: any) => parseDate(b.date) - parseDate(a.date),
       );
 
       setSelectedSupplierPOs(sortedPOs);
@@ -516,6 +507,7 @@ export function ProcurementOverview({
 
   // Function to handle PO count click
   const handlePOCountClick = (supplierName: string) => {
+    setSelectedSupplierName(supplierName);
     fetchSupplierPOs(supplierName);
   };
 
@@ -523,6 +515,7 @@ export function ProcurementOverview({
   const closeModal = () => {
     setShowPOModal(false);
     setSelectedSupplierPOs([]);
+    setSelectedSupplierName("");
   };
 
   return (
@@ -847,7 +840,7 @@ export function ProcurementOverview({
                       "Total Amount",
                     ]}
                   />
-                  <Bar dataKey={(entry) => entry.total} radius={[10, 10, 0, 0]}>
+                  <Bar dataKey="total" radius={[10, 10, 0, 0]}>
                     {categoryData.map((entry, index) => {
                       let color = "#90a4ae"; // Default to Other
                       if (entry.category === "Service") {
@@ -1061,7 +1054,7 @@ export function ProcurementOverview({
                 <div className="px-6 py-4 border-b border-gray-200">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-gray-900">
-                      PO Details
+                      PO Details by {selectedSupplierName}
                     </h3>
                     <button
                       onClick={closeModal}
@@ -1106,11 +1099,7 @@ export function ProcurementOverview({
                                 {po.projectCode && `- ${po.projectCode}`}
                               </h3>
                               <p className="text-sm text-gray-500">
-                                {po.date
-                                  ? new Date(po.date)
-                                      .toISOString()
-                                      .split("T")[0]
-                                  : "No date"}
+                                {po.date ? po.date : "No date"}
                               </p>
                             </div>
                             <div className="text-right">

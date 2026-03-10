@@ -45,6 +45,499 @@ import {
   getSheetDataByName,
 } from "../../services/googleSheetsService";
 
+// Constants
+const COST_CATEGORIES = {
+  SERVICE: "Service",
+  MATERIAL: "Material",
+  OTHER: "Other",
+} as const;
+
+const TOOLTIP_STYLE = {
+  backgroundColor: "#ffffff",
+  border: "1px solid #e5e7eb",
+  borderRadius: "8px",
+  padding: "12px 16px",
+  fontSize: "16px",
+  fontFamily: "inherit",
+  lineHeight: 1.5,
+  boxShadow:
+    "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+};
+
+const LEGEND_STYLE = {
+  padding: "0px",
+  margin: "0px",
+  textAlign: "center",
+  fontSize: "16px",
+  fontWeight: 400,
+  color: "#475569",
+} as const;
+
+const CATEGORY_COLORS = {
+  [COST_CATEGORIES.SERVICE]: "#72d572",
+  [COST_CATEGORIES.MATERIAL]: "#29b6f6",
+  [COST_CATEGORIES.OTHER]: "#90a4ae",
+} as const;
+
+// Helper Functions
+const parseDateSafe = (dateStr: string) => {
+  if (!dateStr) return 0;
+
+  if (dateStr.includes("/")) {
+    const [day, month, year] = dateStr.split("/");
+    const y = Number(year) > 2400 ? Number(year) - 543 : Number(year); // Handle Buddhist calendar
+    return new Date(y, Number(month) - 1, Number(day)).getTime();
+  }
+
+  return new Date(dateStr).getTime();
+};
+
+const parseAmount = (value: any): number => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    // Remove commas and parse
+    return Number(value.replace(/,/g, "")) || 0;
+  }
+  return 0;
+};
+
+const formatCurrency = (value: number): string => {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const calculatePercentage = (value: number, total: number): number => {
+  return total > 0 ? (value / total) * 100 : 0;
+};
+
+const getCategoryColor = (category: string): string => {
+  if (category.toLowerCase().includes(COST_CATEGORIES.SERVICE.toLowerCase())) {
+    return CATEGORY_COLORS[COST_CATEGORIES.SERVICE];
+  }
+  if (category.toLowerCase().includes(COST_CATEGORIES.MATERIAL.toLowerCase())) {
+    return CATEGORY_COLORS[COST_CATEGORIES.MATERIAL];
+  }
+  return CATEGORY_COLORS[COST_CATEGORIES.OTHER];
+};
+
+// Item categorization helper
+const categorizeItemCode = (code: string) => {
+  if (!code) return "Uncategorized";
+
+  if (
+    code.startsWith("CAMERA") ||
+    code.startsWith("DVR") ||
+    code.startsWith("NVR") ||
+    code.startsWith("P-CAMERA") ||
+    code.startsWith("P-NVR")
+  ) {
+    return "CCTV";
+  }
+
+  if (code.startsWith("HDD") || code.startsWith("SSD")) {
+    return "Storage";
+  }
+
+  if (
+    code.startsWith("SWITCH") ||
+    code.startsWith("P-SWITCH") ||
+    code.startsWith("LAN") ||
+    code.startsWith("SFP")
+  ) {
+    return "Network";
+  }
+
+  if (
+    code.startsWith("POWER") ||
+    code.startsWith("POWERSUP") ||
+    code.startsWith("THW") ||
+    code.startsWith("VCT") ||
+    code.startsWith("NYY")
+  ) {
+    return "Power & Electrical";
+  }
+
+  if (
+    code.startsWith("ACCS") ||
+    code.startsWith("BNC") ||
+    code.startsWith("CLAMP")
+  ) {
+    return "Installation Material";
+  }
+
+  if (code.startsWith("TONER")) {
+    return "Office Supply";
+  }
+
+  if (
+    code.startsWith("P-PHONE") ||
+    code.startsWith("P-IPAD") ||
+    code.startsWith("SERVER")
+  ) {
+    return "IT Device";
+  }
+
+  if (code.startsWith("P-SOFTWARE")) {
+    return "Software";
+  }
+
+  if (code.startsWith("SVSUB")) {
+    return "Service Operation";
+  }
+
+  if (code.startsWith("SVOTHER")) {
+    return "Other Expense";
+  }
+
+  if (code.startsWith("SV150100")) {
+    return "Finance";
+  }
+
+  return "Uncategorized";
+};
+
+// Data Processing Helper Functions
+const buildCostDistribution = (lineRows: any[]) => {
+  const categoryMap = lineRows.reduce((acc: any, row: any) => {
+    const category = row.Category || row.category || COST_CATEGORIES.OTHER;
+    const amount = parseAmount(row["Total Amount"]);
+    acc[category] = (acc[category] || 0) + amount;
+    return acc;
+  }, {});
+
+  const categoryOrder = [
+    COST_CATEGORIES.SERVICE,
+    COST_CATEGORIES.MATERIAL,
+    COST_CATEGORIES.OTHER,
+  ];
+
+  return categoryOrder
+    .map((targetName) => {
+      const foundEntry = Object.entries(categoryMap).find(
+        ([name]) =>
+          name.toLowerCase().includes(targetName.toLowerCase()) ||
+          (targetName === COST_CATEGORIES.SERVICE &&
+            (name.toLowerCase().includes("software") ||
+              name.toLowerCase().includes("maintenance"))) ||
+          (targetName === COST_CATEGORIES.MATERIAL &&
+            (name.toLowerCase().includes("equipment") ||
+              name.toLowerCase().includes("hardware"))),
+      );
+
+      if (!foundEntry) return null;
+
+      const [name, value] = foundEntry;
+      const color = getCategoryColor(targetName);
+
+      return {
+        name: targetName,
+        value: value as number,
+        description: `${targetName} - ${formatCurrency(value as number)}`,
+        color: color,
+      };
+    })
+    .filter(Boolean);
+};
+
+const buildMonthlyTrend = (lineRows: any[], filters: any) => {
+  const categories = [
+    ...new Set(
+      lineRows.map(
+        (row: any) => row.Category || row.category || COST_CATEGORIES.OTHER,
+      ),
+    ),
+  ].filter(Boolean);
+
+  const sortedCategories = categories.sort((a, b) => {
+    const aIndex = [
+      COST_CATEGORIES.SERVICE,
+      COST_CATEGORIES.MATERIAL,
+      COST_CATEGORIES.OTHER,
+    ].indexOf(a);
+    const bIndex = [
+      COST_CATEGORIES.SERVICE,
+      COST_CATEGORIES.MATERIAL,
+      COST_CATEGORIES.OTHER,
+    ].indexOf(b);
+    if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+    if (aIndex !== -1) return -1;
+    if (bIndex !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  const monthlyTrendMap = lineRows.reduce((acc: any, row: any) => {
+    const dateStr = row.Date || row.date || row["DATE"];
+
+    if (!dateStr) return acc;
+
+    const date = new Date(dateStr);
+    const month = date.toLocaleString("en-US", { month: "long" });
+    const year = date.getFullYear();
+    let yearBE = year < 2400 ? year + 543 : year;
+
+    const monthKey = filters.year === "all" ? `${month}-${yearBE}` : month;
+
+    if (!acc[monthKey]) {
+      const monthData: any = {
+        month: month,
+        yearBE: yearBE,
+        fullLabel: monthKey,
+        Total: 0,
+        _sortKey: date.getTime(),
+        _monthIndex: date.getMonth(),
+        _year: year,
+      };
+
+      sortedCategories.forEach((category: string) => {
+        monthData[category] = 0;
+      });
+
+      acc[monthKey] = monthData;
+    }
+
+    const category = row.Category || row.category || COST_CATEGORIES.OTHER;
+    const amount = parseAmount(row["Total Amount"]);
+
+    acc[monthKey].Total += amount;
+    if (acc[monthKey][category] !== undefined) {
+      acc[monthKey][category] += amount;
+    }
+
+    return acc;
+  }, {});
+
+  return Object.values(monthlyTrendMap).sort(
+    (a: any, b: any) => a._sortKey - b._sortKey,
+  );
+};
+
+const buildSupplierSpend = (rows: any[]) => {
+  const supplierMap = rows.reduce((acc: any, row: any) => {
+    const name = (row.Supplier || "Unknown").trim();
+    acc[name] = (acc[name] || 0) + parseAmount(row["Total Amount"]);
+    return acc;
+  }, {});
+
+  return Object.entries(supplierMap)
+    .map(([name, totalAmount]) => ({
+      name,
+      totalAmount: totalAmount as number,
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount)
+    .slice(0, 10);
+};
+
+const buildProjectSpend = (rows: any[]) => {
+  const projectMap = rows.reduce((acc: any, row: any) => {
+    const projectCode =
+      row.Project || row.projectCode || row["Project Code"] || "Unknown";
+    acc[projectCode] =
+      (acc[projectCode] || 0) + parseAmount(row["Total Amount"]);
+    return acc;
+  }, {});
+
+  return Object.entries(projectMap)
+    .map(([projectCode, totalAmount]) => ({
+      projectCode,
+      totalAmount: totalAmount as number,
+      spendInMillions: (totalAmount as number) / 1000000,
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount);
+};
+
+const buildProjectCategoryMix = (lineRows: any[], filters: any) => {
+  const projectCategoryMap = lineRows.reduce((acc: any, row: any) => {
+    const projectCode =
+      row.Project || row.projectCode || row["Project Code"] || "Unknown";
+    const category = row.Category || row.category || COST_CATEGORIES.OTHER;
+
+    if (!acc[projectCode]) {
+      acc[projectCode] = {};
+    }
+
+    acc[projectCode][category] =
+      (acc[projectCode][category] || 0) + parseAmount(row["Total Amount"]);
+
+    return acc;
+  }, {});
+
+  return Object.entries(projectCategoryMap)
+    .map(([projectCode, categories]) => ({
+      project: projectCode,
+      ...(categories as Record<string, number>),
+      total: Object.values(categories as Record<string, number>).reduce(
+        (sum: number, val: number) => sum + (isNaN(val) ? 0 : val),
+        0,
+      ),
+    }))
+    .filter((item) => item.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+};
+
+const buildSupplierTrend = (rows: any[]) => {
+  const supplierTrendMap = new Map<string, Map<string, number>>();
+
+  rows.forEach((row: any) => {
+    const supplier = (row.Supplier || row.supplierName || "Unknown").trim();
+    const amount = parseAmount(
+      row["Total Amount"] ||
+        row["TOTAL AMOUNT"] ||
+        row.totalAmount ||
+        row.totalPrice ||
+        0,
+    );
+
+    const dateStr = row.Date || row.date || row["DATE"];
+    if (!dateStr) return;
+
+    if (typeof dateStr === "string") {
+      if (dateStr.includes("/")) {
+        const [d, m, y] = dateStr.split("/").map(Number);
+        const finalYear = y < 2400 ? y : y - 543;
+        var date = new Date(finalYear, m - 1, d);
+      } else if (dateStr.includes("-")) {
+        var date = new Date(dateStr);
+      }
+    } else {
+      var date = new Date(dateStr);
+    }
+
+    if (!date || isNaN(date.getTime())) return;
+
+    const month = date.toLocaleString("en-US", { month: "short" });
+    const year = date.getFullYear();
+    const monthKey = `${month}-${year}`;
+
+    if (!supplierTrendMap.has(supplier)) {
+      supplierTrendMap.set(supplier, new Map());
+    }
+
+    const supplierData = supplierTrendMap.get(supplier)!;
+
+    if (!supplierData.has(monthKey)) {
+      supplierData.set(monthKey, 0);
+    }
+
+    supplierData.set(monthKey, supplierData.get(monthKey)! + amount);
+  });
+
+  const supplierTrendArray = Array.from(supplierTrendMap.entries())
+    .map(([supplier, monthData]) => {
+      const monthlyData = Array.from(monthData.entries())
+        .map(([month, amount]) => {
+          const [monthName, yearStr] = month.split("-");
+          const year = parseInt(yearStr);
+          const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+          const sortKey = new Date(year, monthIndex, 1).getTime();
+
+          return {
+            month,
+            amount,
+            sortKey,
+          };
+        })
+        .sort((a, b) => a.sortKey - b.sortKey);
+
+      return {
+        supplier: supplier,
+        data: monthlyData.map(({ month, amount }) => ({
+          month,
+          amount,
+        })),
+      };
+    })
+    .filter((supplier) => supplier.data.length > 0);
+
+  if (supplierTrendArray.length > 0) {
+    const allSupplierMap = new Map<string, number>();
+
+    supplierTrendArray.forEach((supplier) => {
+      supplier.data.forEach((monthData) => {
+        const currentAmount = allSupplierMap.get(monthData.month) || 0;
+        allSupplierMap.set(monthData.month, currentAmount + monthData.amount);
+      });
+    });
+
+    const allSupplierData = Array.from(allSupplierMap.entries())
+      .map(([month, amount]) => {
+        const [monthName, yearStr] = month.split("-");
+        const year = parseInt(yearStr);
+        const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+        const sortKey = new Date(year, monthIndex, 1).getTime();
+
+        return {
+          month,
+          amount,
+          sortKey,
+        };
+      })
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map(({ month, amount }) => ({
+        month,
+        amount,
+      }));
+
+    supplierTrendArray.unshift({
+      supplier: "All Suppliers",
+      data: allSupplierData,
+    });
+  }
+
+  return supplierTrendArray;
+};
+
+const buildPOVolumeData = (rows: any[], filters: any) => {
+  const poVolumeMap = rows.reduce((acc: any, row: any) => {
+    const dateStr = row.Date || row.date || row["DATE"];
+    const poNumber = row["PO Number"] || row.poNumber;
+
+    if (!dateStr || !poNumber) return acc;
+
+    const date = new Date(dateStr);
+    const month = date.toLocaleString("en-US", { month: "short" });
+    const monthFull = date.toLocaleString("en-US", { month: "long" });
+    const year = date.getFullYear();
+    let yearBE = year < 2400 ? year + 543 : year;
+
+    const monthKey = `${month}-${yearBE}`;
+
+    if (!acc[monthKey]) {
+      acc[monthKey] = {
+        month: month,
+        monthFull: monthFull,
+        monthLabel: month,
+        yearBE: yearBE,
+        yearLabel: yearBE.toString(),
+        fullLabel: monthKey,
+        poCount: 0,
+        _sortKey: date.getTime(),
+        poDetails: [],
+      };
+    }
+
+    acc[monthKey].poCount += 1;
+
+    acc[monthKey].poDetails.push({
+      poNumber: poNumber,
+      date: dateStr,
+      totalAmount: parseAmount(row["Total Amount"]),
+      category: row.Category || row.category || COST_CATEGORIES.OTHER,
+      description: row.Description || row.description || "No description",
+      projectCode: row.Project || row.project || "",
+    });
+
+    return acc;
+  }, {});
+
+  return Object.values(poVolumeMap)
+    .sort((a: any, b: any) => a._sortKey - b._sortKey)
+    .map(({ _sortKey, ...item }: any) => item);
+};
+
 interface SupplierData {
   id: string;
 
@@ -270,19 +763,7 @@ const ExpenseTooltip = ({ active, payload, label }: any) => {
   const item = payload[0];
 
   return (
-    <div
-      style={{
-        backgroundColor: "#ffffff",
-        border: "1px solid #e5e7eb",
-        borderRadius: "8px",
-        padding: "12px 16px",
-        fontSize: "16px",
-        fontFamily: "inherit",
-        lineHeight: 1.5,
-        boxShadow:
-          "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-      }}
-    >
+    <div style={TOOLTIP_STYLE}>
       {/* LABEL */}
       <div
         style={{
@@ -468,8 +949,6 @@ export function CostInsights({
 
   const [itemSubcategoryData, setItemSubcategoryData] = useState<any[]>([]);
 
-  const [allCategories, setAllCategories] = useState<string[]>([]);
-
   const [selectedSupplier, setSelectedSupplier] = useState<string>("all");
 
   const [supplierTrendData, setSupplierTrendData] = useState<any[]>([]);
@@ -516,550 +995,363 @@ export function CostInsights({
   ];
 
   // derive total for percentage labels
-  const totalSubcategory = itemSubcategoryData.reduce(
-    (sum, d) => sum + (d.value || 0),
-    0,
+  const totalSubcategory = React.useMemo(
+    () => itemSubcategoryData.reduce((sum, d) => sum + (d.value || 0), 0),
+    [itemSubcategoryData],
   );
+
+  // Memoized calculations for better performance
+  const spendingTrendChartData = React.useMemo(
+    () =>
+      monthlyTrendByCategoryData.map((d: any) => ({
+        ...d,
+        monthLabel: d.month.slice(0, 3),
+        yearLabel: d.yearBE,
+      })),
+    [monthlyTrendByCategoryData],
+  );
+
+  const allCategories = React.useMemo(
+    () =>
+      [
+        ...new Set(
+          monthlyTrendByCategoryData.flatMap((d: any) =>
+            Object.keys(d).filter(
+              (key) =>
+                key !== "month" &&
+                key !== "yearBE" &&
+                key !== "fullLabel" &&
+                key !== "Total" &&
+                key !== "_sortKey" &&
+                key !== "_monthIndex" &&
+                key !== "_year" &&
+                key !== "monthLabel" &&
+                key !== "yearLabel",
+            ),
+          ),
+        ),
+      ].filter(Boolean),
+    [monthlyTrendByCategoryData],
+  );
+
+  // Memoized heavy calculations for better performance
+  const totalCostDistribution = React.useMemo(
+    () => costDistributionData.reduce((sum: number, d) => sum + d.value, 0),
+    [costDistributionData],
+  );
+
+  const formattedTotalCostDistribution = React.useMemo(
+    () =>
+      totalCostDistribution.toLocaleString(undefined, {
+        minimumFractionDigits: totalCostDistribution % 1 === 0 ? 0 : 2,
+        maximumFractionDigits: 2,
+      }),
+    [totalCostDistribution],
+  );
+
+  const costBreakdownItems = React.useMemo(
+    () =>
+      costDistributionData.map((item: any, index: number) => {
+        const percentage = ((item.value / totalCostDistribution) * 100).toFixed(
+          1,
+        );
+
+        return {
+          ...item,
+          percentage,
+          formattedValue: formatCurrency(item.value),
+        };
+      }),
+    [costDistributionData, totalCostDistribution],
+  );
+
+  // Memoized supplier data processing
+  const supplierBreakdownData = React.useMemo(() => {
+    if (!lineData || !lineData.rows || loading) {
+      return { suppliersWithCategories: [], maxTotal: 0 };
+    }
+
+    // Get supplier data with category breakdown from procurement_line
+    const supplierCategoryMap = new Map();
+
+    if (lineData && lineData.rows && Array.isArray(lineData.rows)) {
+      // Apply the same filters as used in data fetching
+      let filteredRows = [...lineData.rows];
+
+      // Apply year filter
+      if (filters.year !== "all") {
+        filteredRows = filteredRows.filter((row: any) => {
+          const dateStr = row.Date || row.date || row["DATE"];
+
+          if (dateStr) {
+            // Use parseDateSafe to get timestamp, then extract year
+            const timestamp = parseDateSafe(dateStr);
+            if (timestamp > 0) {
+              const year = new Date(timestamp).getFullYear();
+              return year.toString() === filters.year;
+            }
+          }
+
+          return false;
+        });
+      }
+
+      // Apply project filter
+      if (filters.project !== "all") {
+        filteredRows = filteredRows.filter(
+          (row: any) =>
+            (row.Project || row.projectCode || row["Project Code"]) ===
+            filters.project,
+        );
+      }
+
+      filteredRows.forEach((row: any) => {
+        const supplier = row.Supplier || row.supplierName || "Unknown";
+        const category = (
+          row.Category ||
+          row.category ||
+          "Other"
+        ).toLowerCase();
+        const amount = parseAmount(
+          row["Total Amount"] || row.totalPrice || row.total || 0,
+        );
+
+        if (!supplierCategoryMap.has(supplier)) {
+          supplierCategoryMap.set(supplier, {
+            service: 0,
+            material: 0,
+            other: 0,
+            total: 0,
+          });
+        }
+
+        const supplierData = supplierCategoryMap.get(supplier);
+        if (category === "service") {
+          supplierData.service += amount;
+        } else if (category === "material") {
+          supplierData.material += amount;
+        } else {
+          supplierData.other += amount;
+        }
+        supplierData.total += amount;
+      });
+    }
+
+    // Convert to array and sort by total
+    const suppliersWithCategories = Array.from(supplierCategoryMap.entries())
+      .map(([name, data]) => ({
+        name,
+        ...data,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+
+    const maxTotal = Math.max(...suppliersWithCategories.map((s) => s.total));
+
+    return { suppliersWithCategories, maxTotal };
+  }, [lineData, loading, filters]);
+
+  const supplierChartData = React.useMemo(() => {
+    const { suppliersWithCategories, maxTotal } = supplierBreakdownData;
+
+    return suppliersWithCategories.map((supplier, index) => {
+      const total = suppliersWithCategories.reduce(
+        (sum, s) => sum + s.total,
+        0,
+      );
+      const percentage = total ? (supplier.total / total) * 100 : 0;
+      const barWidth = (supplier.total / maxTotal) * 100;
+
+      return {
+        ...supplier,
+        total,
+        percentage,
+        barWidth,
+        formattedTotal: formatCurrency(supplier.total),
+      };
+    });
+  }, [supplierBreakdownData]);
+
+  // Memoized project section calculations
+  const projectTotalSpend = React.useMemo(
+    () =>
+      projectSpendData.reduce((sum, project) => sum + project.totalAmount, 0),
+    [projectSpendData],
+  );
+
+  const formattedProjectTotalSpend = React.useMemo(
+    () =>
+      projectTotalSpend.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      }),
+    [projectTotalSpend],
+  );
+
+  const projectChartData = React.useMemo(
+    () =>
+      projectSpendData.map((project, index) => {
+        const maxSpend = Math.max(
+          ...projectSpendData.map((p) => p.totalAmount),
+        );
+        const barWidth =
+          maxSpend > 0 ? (project.totalAmount / maxSpend) * 100 : 0;
+        const totalSpend = projectTotalSpend;
+        const percentage =
+          totalSpend > 0 ? (project.totalAmount / totalSpend) * 100 : 0;
+
+        return {
+          ...project,
+          barWidth,
+          percentage: percentage.toFixed(1),
+          formattedTotal: formatCurrency(project.totalAmount),
+        };
+      }),
+    [projectSpendData, projectTotalSpend],
+  );
+
+  // Memoized supplier trend chart data
+  const supplierTrendChartData = React.useMemo(() => {
+    const selectedData =
+      selectedSupplier === "all"
+        ? supplierTrendData.find((s) => s.supplier === "All Suppliers")?.data ||
+          []
+        : supplierTrendData.find((s) => s.supplier === selectedSupplier)
+            ?.data || [];
+
+    if (selectedData.length === 0) return [];
+
+    // Prepare chartData with distinct month/year labels to mirror Monthly Expense Overview
+    return selectedData.map((d: any) => {
+      const [mon, yr] = d.month.split("-");
+      return {
+        ...d,
+        monthLabel: mon.slice(0, 3),
+        yearLabel: yr,
+      };
+    });
+  }, [supplierTrendData, selectedSupplier]);
+
+  // Memoized project category mix bar configuration
+  const projectCategoryBars = React.useMemo(() => {
+    const allCategories = new Set<string>();
+    projectCategoryMixData.forEach((project) => {
+      Object.keys(project).forEach((key) => {
+        if (key !== "project" && key !== "total") {
+          allCategories.add(key);
+        }
+      });
+    });
+
+    const categoryColors: { [key: string]: string } = {
+      Service: "#72d572",
+      Material: "#29b6f6",
+      Equipment: "#ff9800",
+      Maintenance: "#9c27b0",
+      Other: "#90a4ae",
+    };
+
+    const categoryOrder = ["Other", "Material", "Service"];
+
+    return categoryOrder
+      .filter((category) => allCategories.has(category))
+      .map((category, index) => (
+        <Bar
+          key={category}
+          dataKey={category}
+          stackId="a"
+          fill={categoryColors[category] || `hsl(${index * 60}, 70%, 50%)`}
+          radius={[4, 4, 4, 4]}
+        />
+      ));
+  }, [projectCategoryMixData]);
 
   React.useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
 
-        // Initialize rows variable for error handling
-        let rows: any[] = [];
-
-        // Get procurement_line data for Cost Distribution
-
+        // Fetch procurement_line data
         let lineDataResponse = null;
         try {
           lineDataResponse = await getProcurementLineData();
           setLineData(lineDataResponse);
         } catch (e) {
           console.error("Error fetching procurement line data:", e);
-          setLineData({ rows: [] }); // Set empty data
+          setLineData({ rows: [] });
         }
 
         let lineRows = lineDataResponse ? lineDataResponse.rows : [];
 
-        // Apply filters to line data
+        // Fetch procurement_head data
+        let headDataResponse = null;
+        try {
+          headDataResponse = await getTab1Data();
+        } catch (e) {
+          console.error("Error fetching tab1 data:", e);
+          headDataResponse = { rows: [] };
+        }
 
+        let headRows = headDataResponse.rows;
+
+        // Apply filters to head data
         if (filters.year !== "all") {
-          lineRows = lineRows.filter((row: any) => {
+          headRows = headRows.filter((row: any) => {
             const dateStr = row.Date || row.date || row["DATE"];
-
             if (dateStr) {
-              let year = new Date(dateStr).getFullYear();
-
-              if (year < 2400) year += 543;
-
-              return year.toString() === filters.year;
+              // Use parseDateSafe to get timestamp, then extract year
+              const timestamp = parseDateSafe(dateStr);
+              if (timestamp > 0) {
+                const year = new Date(timestamp).getFullYear();
+                return year.toString() === filters.year;
+              }
             }
-
             return false;
           });
         }
 
         if (filters.project !== "all") {
-          lineRows = lineRows.filter(
+          headRows = headRows.filter(
             (row: any) =>
               (row.Project || row.projectCode || row["Project Code"]) ===
               filters.project,
           );
         }
 
-        // Calculate Cost Distribution from procurement_line - use actual categories from data
-
-        const categoryMap = lineRows.reduce((acc: any, row: any) => {
-          const category = row.Category || row.category || "Other";
-
-          const amount = Number(row["Total Amount"]) || 0;
-
-          acc[category] = (acc[category] || 0) + amount;
-
-          return acc;
-        }, {});
-
-        // Convert to array format for chart with fixed order: Service, Material, Other
-
-        const categoryOrder = ["Service", "Material", "Other"];
-
-        const costDistributionFromLineData = categoryOrder
-
-          .map((targetName) => {
-            const foundEntry = Object.entries(categoryMap).find(
-              ([name]) =>
-                name.toLowerCase().includes(targetName.toLowerCase()) ||
-                (targetName === "Service" &&
-                  (name.toLowerCase().includes("software") ||
-                    name.toLowerCase().includes("maintenance"))) ||
-                (targetName === "Material" &&
-                  (name.toLowerCase().includes("equipment") ||
-                    name.toLowerCase().includes("hardware"))),
-            );
-
-            if (!foundEntry) return null;
-
-            const [name, value] = foundEntry;
-
-            let color = "#90a4ae"; // default color (Other)
-
-            if (targetName === "Service") {
-              color = "#72d572"; // Service Green
-            } else if (targetName === "Material") {
-              color = "#29b6f6"; // Material Blue
-            } else {
-              color = "#90a4ae"; // Other Gray
-            }
-
-            return {
-              name: targetName, // Use standardized name
-
-              value: value as number,
-
-              description: `${targetName} - ${(value as number).toLocaleString(
-                undefined,
-                {
-                  minimumFractionDigits: (value as number) % 1 === 0 ? 0 : 2,
-                  maximumFractionDigits: 2,
-                },
-              )}`,
-
-              color: color,
-            };
-          })
-
-          .filter(Boolean); // Remove null entries
-
-        setCostDistributionData(costDistributionFromLineData);
-
-        // Calculate Monthly Trend from procurement_line - use real categories
-
-        // First, get all unique categories from the data
-        const categories = [
-          ...new Set(
-            lineRows.map((row: any) => row.Category || row.category || "Other"),
-          ),
-        ].filter(Boolean);
-
-        // Sort categories in specific order: Service, Material, Other
-        const sortedCategories = categories.sort((a, b) => {
-          const aIndex = categoryOrder.indexOf(a);
-          const bIndex = categoryOrder.indexOf(b);
-          if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-          if (aIndex !== -1) return -1;
-          if (bIndex !== -1) return 1;
-          return a.localeCompare(b);
-        });
-
-        setAllCategories(sortedCategories);
-
-        const monthlyTrendMap = lineRows.reduce((acc: any, row: any) => {
-          const dateStr = row.Date || row.date || row["DATE"];
-
-          if (!dateStr) return acc;
-
-          const date = new Date(dateStr);
-
-          const month = date.toLocaleString("en-US", { month: "long" });
-
-          const year = date.getFullYear();
-
-          let yearBE = year < 2400 ? year + 543 : year;
-
-          // For the timeline, we need a unique key that preserves chronology
-
-          // If filtering by a specific year, just use the month
-
-          // If showing all years, use month-year
-
-          const monthKey =
-            filters.year === "all" ? `${month}-${yearBE}` : month;
-
-          if (!acc[monthKey]) {
-            // Initialize with all categories set to 0
-            const monthData: any = {
-              month: month,
-
-              yearBE: yearBE,
-
-              fullLabel: monthKey,
-
-              Total: 0,
-
-              _sortKey: date.getTime(),
-
-              _monthIndex: date.getMonth(),
-
-              _year: year,
-            };
-
-            // Add all categories as keys
-            categories.forEach((category: string) => {
-              monthData[category] = 0;
-            });
-
-            acc[monthKey] = monthData;
-          }
-
-          const category = row.Category || row.category || "Other";
-
-          const amount = Number(row["Total Amount"]) || 0;
-
-          acc[monthKey].Total += amount;
-
-          // Add amount to the specific category
-          if (acc[monthKey][category] !== undefined) {
-            acc[monthKey][category] += amount;
-          }
-
-          return acc;
-        }, {});
-
-        // Convert to array and sort chronologically
-
-        const monthlyTrendArray = Object.values(monthlyTrendMap).sort(
-          (a: any, b: any) => a._sortKey - b._sortKey,
-        );
-
-        setMonthlyTrendByCategoryData(monthlyTrendArray);
-
-        // Calculate Item/Subcategory Breakdown from procurement_line
-
-        const categorizeItemCode = (code: string) => {
-          if (!code) return "Uncategorized";
-
-          if (
-            code.startsWith("CAMERA") ||
-            code.startsWith("DVR") ||
-            code.startsWith("NVR") ||
-            code.startsWith("P-CAMERA") ||
-            code.startsWith("P-NVR")
-          ) {
-            return "CCTV";
-          }
-
-          if (code.startsWith("HDD") || code.startsWith("SSD")) {
-            return "Storage";
-          }
-
-          if (
-            code.startsWith("SWITCH") ||
-            code.startsWith("P-SWITCH") ||
-            code.startsWith("LAN") ||
-            code.startsWith("SFP")
-          ) {
-            return "Network";
-          }
-
-          if (
-            code.startsWith("POWER") ||
-            code.startsWith("POWERSUP") ||
-            code.startsWith("THW") ||
-            code.startsWith("VCT") ||
-            code.startsWith("NYY")
-          ) {
-            return "Power & Electrical";
-          }
-
-          if (
-            code.startsWith("ACCS") ||
-            code.startsWith("BNC") ||
-            code.startsWith("CLAMP")
-          ) {
-            return "Installation Material";
-          }
-
-          if (code.startsWith("TONER")) {
-            return "Office Supply";
-          }
-
-          if (
-            code.startsWith("P-PHONE") ||
-            code.startsWith("P-IPAD") ||
-            code.startsWith("SERVER")
-          ) {
-            return "IT Device";
-          }
-
-          if (code.startsWith("P-SOFTWARE")) {
-            return "Software";
-          }
-
-          if (code.startsWith("SVSUB")) {
-            return "Service Operation";
-          }
-
-          if (code.startsWith("SVOTHER")) {
-            return "Other Expense";
-          }
-
-          if (code.startsWith("SV150100")) {
-            return "Finance";
-          }
-
-          return "Uncategorized";
-        };
-
+        // Process data using helper functions
+        setCostDistributionData(buildCostDistribution(lineRows));
+        const monthlyTrendData = buildMonthlyTrend(lineRows, filters);
+        setMonthlyTrendByCategoryData(monthlyTrendData);
+
+        // Calculate Item/Subcategory Breakdown
         const subcategoryMap = lineRows.reduce((acc: any, row: any) => {
           const itemCode = row["Item Code"] || row.itemCode || "";
-
           const category = categorizeItemCode(itemCode);
-
-          const amount = Number(row["Total Amount"]) || 0;
-
+          const amount = parseAmount(row["Total Amount"]);
           acc[category] = (acc[category] || 0) + amount;
-
           return acc;
         }, {});
 
-        // Convert to array format for horizontal bar chart and sort by amount descending
-
         const itemSubcategoryArray = Object.entries(subcategoryMap)
-
           .map(([name, value]) => ({
             name,
-
             value: value as number,
           }))
-
           .sort((a, b) => b.value - a.value);
 
         setItemSubcategoryData(itemSubcategoryArray);
 
-        // Also get procurement_head data for other charts
+        // Process head data
+        setSupplierSpendData(buildSupplierSpend(headRows));
+        setProjectSpendData(buildProjectSpend(headRows));
+        setProjectCategoryMixData(buildProjectCategoryMix(lineRows, filters));
+        setPoVolumeData(buildPOVolumeData(headRows, filters));
 
-        let data = null;
-        try {
-          data = await getTab1Data();
-        } catch (e) {
-          console.error("Error fetching tab1 data:", e);
-          data = { rows: [] }; // Set empty data
-        }
-
-        rows = data.rows;
-
-        // Apply filters to head data
-
-        if (filters.year !== "all") {
-          rows = rows.filter((row: any) => {
-            const dateStr = row.Date || row.date || row["DATE"];
-
-            if (dateStr) {
-              let year = new Date(dateStr).getFullYear();
-
-              if (year < 2400) year += 543;
-
-              return year.toString() === filters.year;
-            }
-
-            return false;
-          });
-        }
-
-        if (filters.project !== "all") {
-          rows = rows.filter(
-            (row: any) =>
-              (row.Project || row.projectCode || row["Project Code"]) ===
-              filters.project,
-          );
-        }
-
-        // 1. Supplier Spend
-
-        const supplierMap = rows.reduce((acc: any, row: any) => {
-          const name = (row.Supplier || "Unknown").trim();
-
-          acc[name] = (acc[name] || 0) + (Number(row["Total Amount"]) || 0);
-
-          return acc;
-        }, {});
-
-        setSupplierSpendData(
-          Object.entries(supplierMap)
-
-            .map(([name, totalAmount]) => ({
-              name,
-
-              totalAmount: totalAmount as number,
-            }))
-
-            .sort((a, b) => b.totalAmount - a.totalAmount)
-
-            .slice(0, 10),
-        );
-
-        // 2. Project Spend Analysis
-        const projectMap = rows.reduce((acc: any, row: any) => {
-          const projectCode =
-            row.Project || row.projectCode || row["Project Code"] || "Unknown";
-
-          acc[projectCode] =
-            (acc[projectCode] || 0) + (Number(row["Total Amount"]) || 0);
-
-          return acc;
-        }, {});
-
-        setProjectSpendData(
-          Object.entries(projectMap)
-
-            .map(([projectCode, totalAmount]) => ({
-              projectCode,
-              totalAmount: totalAmount as number,
-              spendInMillions: (totalAmount as number) / 1000000,
-            }))
-
-            .sort((a, b) => b.totalAmount - a.totalAmount),
-        );
-
-        // 3. Project Monthly Trend Analysis
-        const projectMonthlyMap = rows.reduce((acc: any, row: any) => {
-          const dateStr = row.Date || row.date || row["DATE"];
-          const projectCode =
-            row.Project || row.projectCode || row["Project Code"] || "Unknown";
-
-          if (!dateStr) return acc;
-
-          const date = new Date(dateStr);
-          const monthYear = date.toLocaleString("en-US", {
-            month: "short",
-            year: "numeric",
-          });
-
-          if (!acc[monthYear]) {
-            acc[monthYear] = {};
-          }
-
-          acc[monthYear][projectCode] =
-            (acc[monthYear][projectCode] || 0) +
-            (Number(row["Total Amount"]) || 0);
-
-          return acc;
-        }, {});
-
-        // Convert to array format for chart
-        const projectMonthlyTrendArray = Object.entries(projectMonthlyMap)
-          .map(([monthYear, projects]) => ({
-            month: monthYear,
-            ...(projects as Record<string, number>),
-            total: Object.values(projects as Record<string, number>).reduce(
-              (sum: number, val: number) => sum + val,
-              0,
-            ),
-          }))
-          .sort((a, b) => {
-            // Sort by month/year chronologically
-            const dateA = new Date(a.month);
-            const dateB = new Date(b.month);
-            return dateA.getTime() - dateB.getTime();
-          });
-
-        setProjectMonthlyTrendData(projectMonthlyTrendArray);
-
-        // 5. Project Category Mix Analysis - Use procurement_line data
-        const projectCategoryMap = lineRows.reduce((acc: any, row: any) => {
-          const projectCode =
-            row.Project || row.projectCode || row["Project Code"] || "Unknown";
-          const category = row.Category || row.category || "Other";
-
-          if (!acc[projectCode]) {
-            acc[projectCode] = {};
-          }
-
-          acc[projectCode][category] =
-            (acc[projectCode][category] || 0) +
-            (Number(row["Total Amount"]) || 0);
-
-          return acc;
-        }, {});
-
-        // Convert to array format for stacked bar chart
-        const projectCategoryArray = Object.entries(projectCategoryMap)
-          .map(([projectCode, categories]) => ({
-            project: projectCode,
-            ...(categories as Record<string, number>),
-            total: Object.values(categories as Record<string, number>).reduce(
-              (sum: number, val: number) => sum + (isNaN(val) ? 0 : val),
-              0,
-            ),
-          }))
-          .filter((item) => item.total > 0)
-          .sort((a, b) => b.total - a.total)
-          .slice(0, 10); // Top 10 projects
-
-        setProjectCategoryMixData(projectCategoryArray);
-
-        // 6. PO Volume Trend Analysis
-        const poVolumeMap = rows.reduce((acc: any, row: any) => {
-          const dateStr = row.Date || row.date || row["DATE"];
-          const poNumber = row["PO Number"] || row.poNumber;
-
-          if (!dateStr || !poNumber) return acc;
-
-          const date = new Date(dateStr);
-          const month = date.toLocaleString("en-US", { month: "short" });
-          const monthFull = date.toLocaleString("en-US", { month: "long" });
-          const year = date.getFullYear();
-          let yearBE = year < 2400 ? year + 543 : year;
-
-          const monthKey = `${month}-${yearBE}`;
-
-          if (!acc[monthKey]) {
-            acc[monthKey] = {
-              month: month,
-              monthFull: monthFull,
-              monthLabel: month,
-              yearBE: yearBE,
-              yearLabel: yearBE.toString(),
-              fullLabel: monthKey,
-              poCount: 0,
-              _sortKey: date.getTime(),
-              poDetails: [], // Store actual PO details
-            };
-          }
-
-          acc[monthKey].poCount += 1;
-
-          // Store PO details for click functionality - use totalAmount from head data
-          acc[monthKey].poDetails.push({
-            poNumber: poNumber,
-            date: dateStr,
-            totalAmount: Number(row["Total Amount"]) || 0,
-            category: row.Category || row.category || "Other",
-            description: row.Description || row.description || "No description",
-            projectCode: row.Project || row.project || "",
-          });
-
-          return acc;
-        }, {});
-
-        // Update PO details with total amounts from procurement_head data
-        Object.keys(poVolumeMap).forEach((monthKey) => {
-          poVolumeMap[monthKey].poDetails.forEach((poDetail: any) => {
-            const headRow = rows.find(
-              (row: any) =>
-                String(row["PO Number"] || row.poNumber) === poDetail.poNumber,
-            );
-            if (headRow) {
-              poDetail.totalAmount = Number(headRow["Total Amount"]) || 0;
-            }
-          });
-        });
-
-        // Convert to array and sort chronologically
-        const poVolumeArray = Object.values(poVolumeMap)
-          .sort((a: any, b: any) => a._sortKey - b._sortKey)
-          .map(({ _sortKey, ...item }: any) => item);
-
-        setPoVolumeData(poVolumeArray);
-
-        // 4. Category Breakdown
+        // Category Breakdown
         const colors = ["#6366f1", "#8b5cf6", "#ec4899", "#06b6d4", "#f59e0b"];
-        const catMap = rows.reduce((acc: any, row: any) => {
-          const cat = row.Category || row.category || "Other";
-
-          acc[cat] = (acc[cat] || 0) + (Number(row["Total Amount"]) || 0);
-
+        const catMap = headRows.reduce((acc: any, row: any) => {
+          const cat = row.Category || row.category || COST_CATEGORIES.OTHER;
+          acc[cat] = (acc[cat] || 0) + parseAmount(row["Total Amount"]);
           return acc;
         }, {});
 
@@ -1071,151 +1363,7 @@ export function CostInsights({
           })),
         );
 
-        // Supplier Spending Trend - Use procurement_head data
-        const supplierTrendMap = new Map<string, Map<string, number>>();
-
-        rows.forEach((row: any, index: number) => {
-          // Normalize Supplier name
-          const supplier = (
-            row.Supplier ||
-            row.supplierName ||
-            "Unknown"
-          ).trim();
-
-          // Robust Total Amount Source Extraction
-          const amount = Number(
-            row["Total Amount"] ??
-              row["TOTAL AMOUNT"] ??
-              row["Total Amount "] ??
-              row.totalAmount ??
-              row.totalPrice ?? // Should be removed but used for debugging comparison
-              0,
-          );
-
-          // Adopt the date parsing logic from ProcurementOverview for consistency
-          let date;
-          const dateStr = row.Date || row.date || row["DATE"];
-
-          if (!dateStr) return;
-
-          if (typeof dateStr === "string") {
-            if (dateStr.includes("/")) {
-              const [d, m, y] = dateStr.split("/").map(Number);
-              // Handle BE year if necessary
-              const finalYear = y < 2400 ? y : y - 543;
-              date = new Date(finalYear, m - 1, d);
-            } else if (dateStr.includes("-")) {
-              date = new Date(dateStr);
-            }
-          } else {
-            date = new Date(dateStr);
-          }
-
-          if (!date || isNaN(date.getTime())) return;
-
-          // Temporary Debugging for first few rows
-          if (index < 5) {
-            console.log(`DEBUG ROW ${index}:`, {
-              originalRow: row,
-              extractedAmount: amount,
-              extractedDate: date.toISOString(),
-              supplier: supplier,
-            });
-          }
-
-          const month = date.toLocaleString("en-US", { month: "short" });
-          const year = date.getFullYear();
-          const monthKey = `${month}-${year}`;
-
-          // Aggregate Supplier Spending: supplier → month → amount
-          if (!supplierTrendMap.has(supplier)) {
-            supplierTrendMap.set(supplier, new Map());
-          }
-
-          const supplierData = supplierTrendMap.get(supplier)!;
-
-          if (!supplierData.has(monthKey)) {
-            supplierData.set(monthKey, 0);
-          }
-
-          supplierData.set(monthKey, supplierData.get(monthKey)! + amount);
-        });
-
-        // Convert Aggregated Data for Chart with Chronological Order
-        const supplierTrendArray = Array.from(supplierTrendMap.entries())
-          .map(([supplier, monthData]) => {
-            // Convert month data to array and sort chronologically
-            const monthlyData = Array.from(monthData.entries())
-              .map(([month, amount]) => {
-                // Parse month and year for sorting
-                const [monthName, yearStr] = month.split("-");
-                const year = parseInt(yearStr);
-                const monthIndex = new Date(
-                  `${monthName} 1, ${year}`,
-                ).getMonth();
-                const sortKey = new Date(year, monthIndex, 1).getTime();
-
-                return {
-                  month,
-                  amount,
-                  sortKey,
-                };
-              })
-              .sort((a, b) => a.sortKey - b.sortKey); // Chronological sorting
-
-            return {
-              supplier: supplier, // Use original name from logic above
-              data: monthlyData.map(({ month, amount }) => ({
-                month,
-                amount,
-              })),
-            };
-          })
-          .filter((supplier) => supplier.data.length > 0); // Remove suppliers with no data
-
-        // Create "All Suppliers" aggregation efficiently (NO DOUBLE COUNTING)
-        if (supplierTrendArray.length > 0) {
-          const allSupplierMap = new Map<string, number>();
-
-          // Aggregate all suppliers per month (EXCLUDE "All Suppliers" to prevent double counting)
-          supplierTrendArray.forEach((supplier) => {
-            supplier.data.forEach((monthData) => {
-              const currentAmount = allSupplierMap.get(monthData.month) || 0;
-              allSupplierMap.set(
-                monthData.month,
-                currentAmount + monthData.amount,
-              );
-            });
-          });
-
-          // Convert to chart format and sort chronologically
-          const allSupplierData = Array.from(allSupplierMap.entries())
-            .map(([month, amount]) => {
-              const [monthName, yearStr] = month.split("-");
-              const year = parseInt(yearStr);
-              const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
-              const sortKey = new Date(year, monthIndex, 1).getTime();
-
-              return {
-                month,
-                amount,
-                sortKey,
-              };
-            })
-            .sort((a, b) => a.sortKey - b.sortKey)
-            .map(({ month, amount }) => ({
-              month,
-              amount,
-            }));
-
-          // Add "All Suppliers" at the beginning
-          supplierTrendArray.unshift({
-            supplier: "All Suppliers",
-            data: allSupplierData,
-          });
-        }
-
-        setSupplierTrendData(supplierTrendArray);
+        setSupplierTrendData(buildSupplierTrend(headRows));
       } catch (e: any) {
         console.error("Error in data processing:", e);
         console.error("Error details:", {
@@ -1278,9 +1426,12 @@ export function CostInsights({
         categoryRows = categoryRows.filter((row: any) => {
           const dateStr = row.Date || row.date || row["DATE"];
           if (dateStr) {
-            let year = new Date(dateStr).getFullYear();
-            if (year < 2400) year += 543;
-            return year.toString() === filters.year;
+            // Use parseDateSafe to get timestamp, then extract year
+            const timestamp = parseDateSafe(dateStr);
+            if (timestamp > 0) {
+              const year = new Date(timestamp).getFullYear();
+              return year.toString() === filters.year;
+            }
           }
           return false;
         });
@@ -1309,8 +1460,8 @@ export function CostInsights({
           }
           acc[poNo].lineItems.push({
             category: row.Category || row.category || "Other",
-            unitPrice: parseFloat(row["Unit Price"]) || 0,
-            amount: parseFloat(row["Total Amount"]) || 0,
+            unitPrice: parseAmount(row["Unit Price"]),
+            amount: parseAmount(row["Total Amount"]),
             description: row.Description || row.description || "-",
             itemCode: row["Item Code"] || row.itemCode || "-",
             supplier: row.Supplier || row.supplier || "-",
@@ -1327,16 +1478,17 @@ export function CostInsights({
         );
         if (headRow) {
           poGroups[poNo].totalAmount =
-            parseFloat(
+            parseAmount(
               String(headRow["Total Amount"] || headRow.totalPrice || 0),
             ) || 0;
         }
       });
 
-      const sortedPOs = Object.values(poGroups).sort(
-        (a: any, b: any) =>
-          new Date(b.date).getTime() - new Date(a.date).getTime(),
-      );
+      const sortedPOs = Object.values(poGroups).sort((a: any, b: any) => {
+        const dateA = parseDateSafe(a.date);
+        const dateB = parseDateSafe(b.date);
+        return dateB - dateA; // Sort descending
+      });
 
       console.log("Fetched POs:", sortedPOs); // Debug log
       setSelectedCategoryPOs(sortedPOs);
@@ -1427,7 +1579,7 @@ export function CostInsights({
           itemCode: row["Item Code"] || row.itemCode || "",
           description: row.Description || row.description || "No description",
           category: row.Category || row.category || "Other",
-          amount: parseFloat(row["Total Amount"] || row.totalPrice || 0),
+          amount: parseAmount(row["Total Amount"] || row.totalPrice || 0),
         });
       });
 
@@ -1438,7 +1590,7 @@ export function CostInsights({
         );
         if (headRow) {
           poData.totalAmount =
-            parseFloat(
+            parseAmount(
               String(headRow["Total Amount"] || headRow.totalPrice || 0),
             ) || 0;
         }
@@ -1455,31 +1607,29 @@ export function CostInsights({
     }
   };
 
-  const mockSupplierData: SupplierData = {
-    id: "1",
-
-    name: supplierSpendData[0]?.name || "Loading...",
-
-    totalSpend: supplierSpendData[0]?.totalAmount || 0,
-
-    poCount: 0,
-
-    avgPoValue: 0,
-
-    lastPurchaseDate: "2025-02-15",
-
-    trend: "up",
-
-    trendPercentage: 12.5,
-
-    rating: "gold",
-
-    categories: ["Equipment", "Services"],
-
-    riskLevel: "low",
-
-    paymentTerms: "NET 30",
-  };
+  const mockSupplierData: SupplierData = React.useMemo(
+    () => ({
+      id: "1",
+      name:
+        supplierSpendData && supplierSpendData.length > 0
+          ? supplierSpendData[0].name
+          : "Loading...",
+      totalSpend:
+        supplierSpendData && supplierSpendData.length > 0
+          ? supplierSpendData[0].totalAmount
+          : 0,
+      poCount: 0,
+      avgPoValue: 0,
+      lastPurchaseDate: "2025-02-15",
+      trend: "up",
+      trendPercentage: 12.5,
+      rating: "gold",
+      categories: ["Equipment", "Services", "Maintenance"],
+      riskLevel: "low",
+      paymentTerms: "NET 30",
+    }),
+    [supplierSpendData],
+  );
 
   const getRatingColor = (rating: string) => {
     switch (rating) {
@@ -1512,13 +1662,6 @@ export function CostInsights({
         return "bg-gray-100 text-gray-800";
     }
   };
-
-  // prepare chart version of monthlyTrendByCategoryData for consistent axis formatting
-  const spendingTrendChartData = monthlyTrendByCategoryData.map((d: any) => ({
-    ...d,
-    monthLabel: d.month.slice(0, 3),
-    yearLabel: d.yearBE,
-  }));
 
   return (
     <div className="space-y-6">
@@ -1751,17 +1894,7 @@ export function CostInsights({
                               Total Amount
                             </span>
                             <span className="block text-2xl font-bold text-gray-900 tracking-tight leading-none">
-                              {(() => {
-                                const total = costDistributionData.reduce(
-                                  (sum: number, d) => sum + d.value,
-                                  0,
-                                );
-                                return total.toLocaleString(undefined, {
-                                  minimumFractionDigits:
-                                    total % 1 === 0 ? 0 : 2,
-                                  maximumFractionDigits: 2,
-                                });
-                              })()}
+                              {formattedTotalCostDistribution}
                             </span>
                             <span className="block text-xs font-medium text-gray-500 mt-1">
                               THB
@@ -1785,79 +1918,61 @@ export function CostInsights({
                             </div>
 
                             <div className="space-y-5">
-                              {costDistributionData.map(
-                                (item: any, index: number) => {
-                                  const percentage = (
-                                    (item.value /
-                                      costDistributionData.reduce(
-                                        (sum: number, d: any) => sum + d.value,
-                                        0,
-                                      )) *
-                                    100
-                                  ).toFixed(1);
-
-                                  return (
-                                    <div
-                                      key={index}
-                                      className="group flex items-center justify-between p-3 rounded-md transition-all duration-300 hover:bg-white hover:shadow-lg hover:scale-105 border border-transparent hover:border-gray-200 cursor-pointer"
-                                      onClick={() =>
-                                        handleCategoryClick(item.name)
-                                      }
-                                    >
-                                      <div className="flex items-center gap-4">
-                                        <div
-                                          className="w-1.5 h-10 rounded-full transition-all duration-300"
-                                          style={{
-                                            backgroundColor: item.color,
-                                          }}
-                                        ></div>
-                                        <div>
-                                          <span className="block font-semibold text-gray-900 text-base leading-tight">
-                                            {item.name}
-                                          </span>
-                                          <span className="text-sm font-medium text-gray-500">
-                                            {percentage}% of Total
-                                          </span>
-                                        </div>
+                              {costBreakdownItems.map(
+                                (item: any, index: number) => (
+                                  <div
+                                    key={index}
+                                    className="group flex items-center justify-between p-3 rounded-md transition-all duration-300 hover:bg-white hover:shadow-lg hover:scale-105 border border-transparent hover:border-gray-200 cursor-pointer"
+                                    onClick={() =>
+                                      handleCategoryClick(item.name)
+                                    }
+                                  >
+                                    <div className="flex items-center gap-4">
+                                      <div
+                                        className="w-1.5 h-10 rounded-full transition-all duration-300"
+                                        style={{
+                                          backgroundColor: item.color,
+                                        }}
+                                      ></div>
+                                      <div>
+                                        <span className="block font-semibold text-gray-900 text-base leading-tight">
+                                          {item.name}
+                                        </span>
+                                        <span className="text-sm font-medium text-gray-500">
+                                          {item.percentage}% of Total
+                                        </span>
                                       </div>
-                                      <div className="text-right">
-                                        <div className="flex items-end justify-between w-full gap-1">
-                                          <span className="text-lg font-medium text-gray-900 tracking-tight">
-                                            {item.value.toLocaleString(
-                                              undefined,
-                                              {
-                                                minimumFractionDigits:
-                                                  item.value % 1 === 0 ? 0 : 2,
-                                                maximumFractionDigits: 2,
-                                              },
-                                            )}
-                                          </span>
-                                          <span className="text-[10px] font-medium text-gray-400 mb-1">
-                                            THB
-                                          </span>
-                                        </div>
-                                        <div className="w-32">
-                                          <div className="h-1.5 w-full bg-gray-100 rounded-full mt-1 overflow-hidden">
-                                            <motion.div
-                                              initial={{ width: 0 }}
-                                              animate={{
-                                                width: percentage + "%",
-                                              }}
-                                              transition={{
-                                                duration: 1,
-                                                delay: 0.5 + index * 0.1,
-                                              }}
-                                              className="h-full rounded-full"
-                                              style={{
-                                                backgroundColor: item.color,
-                                              }}
-                                            ></motion.div>
-                                          </div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="flex items-end justify-between w-full gap-1">
+                                        <span className="text-lg font-medium text-gray-900 tracking-tight">
+                                          {item.formattedValue}
+                                        </span>
+                                        <span className="text-[10px] font-medium text-gray-400 mb-1">
+                                          THB
+                                        </span>
+                                      </div>
+                                      <div className="w-32">
+                                        <div className="h-1.5 w-full bg-gray-100 rounded-full mt-1 overflow-hidden">
+                                          <motion.div
+                                            initial={{ width: 0 }}
+                                            animate={{
+                                              width: item.percentage + "%",
+                                            }}
+                                            transition={{
+                                              duration: 1,
+                                              delay: 0.5 + index * 0.1,
+                                            }}
+                                            className="h-full rounded-full"
+                                            style={{
+                                              backgroundColor: item.color,
+                                            }}
+                                          ></motion.div>
                                         </div>
                                       </div>
                                     </div>
-                                  );
-                                },
+                                  </div>
+                                ),
                               )}
                             </div>
                           </div>
@@ -2307,183 +2422,76 @@ export function CostInsights({
                         );
                       }
 
-                      // Get supplier data with category breakdown from procurement_line
-                      const supplierCategoryMap = new Map();
-
-                      // Use lineData (procurement_line) for category breakdown
-                      if (
-                        lineData &&
-                        lineData.rows &&
-                        Array.isArray(lineData.rows)
-                      ) {
-                        // Apply the same filters as used in data fetching
-                        let filteredRows = [...lineData.rows];
-
-                        // Apply year filter
-                        if (filters.year !== "all") {
-                          filteredRows = filteredRows.filter((row: any) => {
-                            const dateStr = row.Date || row.date || row["DATE"];
-
-                            if (dateStr) {
-                              let year = new Date(dateStr).getFullYear();
-
-                              if (year < 2400) year += 543;
-
-                              return year.toString() === filters.year;
-                            }
-
-                            return false;
-                          });
-                        }
-
-                        // Apply project filter
-                        if (filters.project !== "all") {
-                          filteredRows = filteredRows.filter(
-                            (row: any) =>
-                              (row.Project ||
-                                row.projectCode ||
-                                row["Project Code"]) === filters.project,
-                          );
-                        }
-
-                        filteredRows.forEach((row: any) => {
-                          const supplier =
-                            row.Supplier || row.supplierName || "Unknown";
-                          const category = (
-                            row.Category ||
-                            row.category ||
-                            "Other"
-                          ).toLowerCase();
-                          const amount =
-                            parseFloat(
-                              row["Total Amount"] ||
-                                row.totalPrice ||
-                                row.total ||
-                                0,
-                            ) || 0;
-
-                          if (!supplierCategoryMap.has(supplier)) {
-                            supplierCategoryMap.set(supplier, {
-                              service: 0,
-                              material: 0,
-                              other: 0,
-                              total: 0,
+                      return supplierChartData.map((supplier, index) => (
+                        <div
+                          key={supplier.name}
+                          className="space-y-2 cursor-pointer rounded-lg transition-colors p-4 -m-4 group"
+                          onClick={() => handleCategoryClick(supplier.name)}
+                          onMouseEnter={(e) => {
+                            setHoveredSupplier(supplier);
+                            setTooltipPosition({
+                              x: e.clientX,
+                              y: e.clientY,
                             });
-                          }
-
-                          const supplierData =
-                            supplierCategoryMap.get(supplier);
-                          if (category === "service") {
-                            supplierData.service += amount;
-                          } else if (category === "material") {
-                            supplierData.material += amount;
-                          } else {
-                            supplierData.other += amount;
-                          }
-                          supplierData.total += amount;
-                        });
-                      }
-
-                      // Convert to array and sort by total
-                      const suppliersWithCategories = Array.from(
-                        supplierCategoryMap.entries(),
-                      )
-                        .map(([name, data]) => ({
-                          name,
-                          ...data,
-                        }))
-                        .sort((a, b) => b.total - a.total)
-                        .slice(0, 10);
-
-                      const maxTotal = Math.max(
-                        ...suppliersWithCategories.map((s) => s.total),
-                      );
-
-                      return suppliersWithCategories.map((supplier, index) => {
-                        const total = suppliersWithCategories.reduce(
-                          (sum, s) => sum + s.total,
-                          0,
-                        );
-                        const percentage = total
-                          ? (supplier.total / total) * 100
-                          : 0;
-                        const barWidth = (supplier.total / maxTotal) * 100;
-
-                        return (
-                          <div
-                            key={supplier.name}
-                            className="space-y-2 cursor-pointer rounded-lg transition-colors p-4 -m-4 group"
-                            onClick={() => handleCategoryClick(supplier.name)}
-                            onMouseEnter={(e) => {
-                              setHoveredSupplier(supplier);
-                              setTooltipPosition({
-                                x: e.clientX,
-                                y: e.clientY,
-                              });
-                            }}
-                            onMouseMove={(e) => {
-                              setTooltipPosition({
-                                x: e.clientX,
-                                y: e.clientY,
-                              });
-                            }}
-                            onMouseLeave={() => {
-                              setHoveredSupplier(null);
-                            }}
-                          >
-                            <div className="flex justify-between items-end">
-                              <label className="text-sm font-normal text-slate-700 dark:text-slate-300 group-hover:font-bold transition-all duration-200">
-                                {supplier.name}
-                              </label>
-                              <span className="text-sm text-slate-900 dark:text-slate-100 group-hover:font-bold transition-all duration-200">
-                                {supplier.total.toLocaleString(undefined, {
-                                  minimumFractionDigits:
-                                    supplier.total % 1 === 0 ? 0 : 2,
-                                  maximumFractionDigits: 2,
-                                })}{" "}
-                                <span className="!font-normal">
-                                  ({percentage.toFixed(1)}%)
-                                </span>
+                          }}
+                          onMouseMove={(e) => {
+                            setTooltipPosition({
+                              x: e.clientX,
+                              y: e.clientY,
+                            });
+                          }}
+                          onMouseLeave={() => {
+                            setHoveredSupplier(null);
+                          }}
+                        >
+                          <div className="flex justify-between items-end">
+                            <label className="text-sm font-normal text-slate-700 dark:text-slate-300 group-hover:font-bold transition-all duration-200">
+                              {supplier.name}
+                            </label>
+                            <span className="text-sm text-slate-900 dark:text-slate-100 group-hover:font-bold transition-all duration-200">
+                              {supplier.formattedTotal}{" "}
+                              <span className="!font-normal">
+                                ({supplier.percentage.toFixed(1)}%)
                               </span>
-                            </div>
-                            <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex">
-                              {/* Service segment */}
-                              {supplier.service > 0 && (
-                                <div
-                                  className="h-full rounded-l-full transition-all duration-500"
-                                  style={{
-                                    backgroundColor: "#72d572",
-                                    width: `${(supplier.service / maxTotal) * 100}%`,
-                                  }}
-                                  title={`Service: ${((supplier.service / supplier.total) * 100).toFixed(1)}% - ${supplier.service.toLocaleString()}`}
-                                />
-                              )}
-                              {/* Material segment */}
-                              {supplier.material > 0 && (
-                                <div
-                                  className="h-full transition-all duration-500"
-                                  style={{
-                                    backgroundColor: "#29b6f6",
-                                    width: `${(supplier.material / maxTotal) * 100}%`,
-                                  }}
-                                  title={`Material: ${((supplier.material / supplier.total) * 100).toFixed(1)}% - ${supplier.material.toLocaleString()}`}
-                                />
-                              )}
-                              {/* Other segment */}
-                              {supplier.other > 0 && (
-                                <div
-                                  className="h-full rounded-r-full transition-all duration-500"
-                                  style={{
-                                    backgroundColor: "#90a4ae",
-                                    width: `${(supplier.other / maxTotal) * 100}%`,
-                                  }}
-                                  title={`Other: ${((supplier.other / supplier.total) * 100).toFixed(1)}% - ${supplier.other.toLocaleString()}`}
-                                />
-                              )}
-                            </div>
+                            </span>
                           </div>
-                        );
-                      });
+                          <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                            {/* Service segment */}
+                            {supplier.service > 0 && (
+                              <div
+                                className="h-full rounded-l-full transition-all duration-500"
+                                style={{
+                                  backgroundColor: "#72d572",
+                                  width: `${(supplier.service / supplierBreakdownData.maxTotal) * 100}%`,
+                                }}
+                                title={`Service: ${((supplier.service / supplier.total) * 100).toFixed(1)}% - ${formatCurrency(supplier.service)}`}
+                              />
+                            )}
+                            {/* Material segment */}
+                            {supplier.material > 0 && (
+                              <div
+                                className="h-full transition-all duration-500"
+                                style={{
+                                  backgroundColor: "#29b6f6",
+                                  width: `${(supplier.material / supplierBreakdownData.maxTotal) * 100}%`,
+                                }}
+                                title={`Material: ${((supplier.material / supplier.total) * 100).toFixed(1)}% - ${formatCurrency(supplier.material)}`}
+                              />
+                            )}
+                            {/* Other segment */}
+                            {supplier.other > 0 && (
+                              <div
+                                className="h-full rounded-r-full transition-all duration-500"
+                                style={{
+                                  backgroundColor: "#90a4ae",
+                                  width: `${(supplier.other / supplierBreakdownData.maxTotal) * 100}%`,
+                                }}
+                                title={`Other: ${((supplier.other / supplier.total) * 100).toFixed(1)}% - ${formatCurrency(supplier.other)}`}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ));
                     })()}
                   </div>
                   <p className="text-xs text-gray-500 mt-4">
@@ -2523,201 +2531,168 @@ export function CostInsights({
                   }
                 >
                   <div className="space-y-4">
-                    {(() => {
-                      // Get data for selected supplier or aggregated data from all suppliers
-                      const selectedData =
-                        selectedSupplier === "all"
-                          ? supplierTrendData.find(
-                              (s) => s.supplier === "All Suppliers",
-                            )?.data || []
-                          : supplierTrendData.find(
-                              (s) => s.supplier === selectedSupplier,
-                            )?.data || [];
-
-                      if (selectedData.length === 0) {
-                        return (
-                          <div className="flex items-center justify-center h-64">
-                            <div className="text-center">
-                              <div className="text-gray-400 mb-2">📊</div>
-                              <div className="text-sm text-gray-500">
-                                No trend data available for selected supplier
-                              </div>
-                            </div>
+                    {supplierTrendChartData.length === 0 ? (
+                      <div className="flex items-center justify-center h-64">
+                        <div className="text-center">
+                          <div className="text-gray-400 mb-2">📊</div>
+                          <div className="text-sm text-gray-500">
+                            No trend data available for selected supplier
                           </div>
-                        );
-                      }
+                        </div>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={450}>
+                        <LineChart
+                          data={supplierTrendChartData}
+                          margin={{
+                            top: 20,
+                            right: 40,
+                            left: 30,
+                            bottom: 20,
+                          }}
+                        >
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            vertical={false}
+                            stroke="#e5e7eb"
+                          />
+                          <XAxis
+                            dataKey="monthLabel"
+                            axisLine={false}
+                            tickLine={false}
+                            padding={{ left: 20, right: 20 }}
+                            stroke="#6b7280"
+                            fontSize={12}
+                            xAxisId="primary"
+                            tickMargin={5}
+                          />
+                          <XAxis
+                            dataKey="yearLabel"
+                            stroke="#6b7280"
+                            fontSize={10}
+                            tickLine={false}
+                            axisLine={false}
+                            xAxisId="secondary"
+                            orientation="bottom"
+                            padding={{ left: 20, right: 20 }}
+                            height={10}
+                            tick={{ dy: -2 }}
+                            interval={0}
+                            tickFormatter={(value, index) => {
+                              // Only show year label for the middle month of each year
+                              if (
+                                !supplierTrendChartData ||
+                                supplierTrendChartData.length === 0
+                              )
+                                return "";
 
-                      // Prepare chartData with distinct month/year labels to mirror Monthly Expense Overview
-                      const chartData = selectedData.map((d: any) => {
-                        const [mon, yr] = d.month.split("-");
-                        return {
-                          ...d,
-                          monthLabel: mon.slice(0, 3),
-                          yearLabel: yr,
-                        };
-                      });
-
-                      return (
-                        <ResponsiveContainer width="100%" height={450}>
-                          <LineChart
-                            data={chartData}
-                            margin={{
-                              top: 20,
-                              right: 40,
-                              left: 30,
-                              bottom: 20,
-                            }}
-                          >
-                            <CartesianGrid
-                              strokeDasharray="3 3"
-                              vertical={false}
-                              stroke="#e5e7eb"
-                            />
-                            <XAxis
-                              dataKey="monthLabel"
-                              axisLine={false}
-                              tickLine={false}
-                              padding={{ left: 20, right: 20 }}
-                              stroke="#6b7280"
-                              fontSize={12}
-                              xAxisId="primary"
-                              tickMargin={5}
-                            />
-                            <XAxis
-                              dataKey="yearLabel"
-                              stroke="#6b7280"
-                              fontSize={10}
-                              tickLine={false}
-                              axisLine={false}
-                              xAxisId="secondary"
-                              orientation="bottom"
-                              padding={{ left: 20, right: 20 }}
-                              height={10}
-                              tick={{ dy: -2 }}
-                              interval={0}
-                              tickFormatter={(value, index) => {
-                                // Only show year label for the middle month of each year
-                                if (!chartData || chartData.length === 0)
-                                  return "";
-
-                                // Group months by year
-                                const yearGroups: { [key: string]: number[] } =
-                                  {};
-                                chartData.forEach((item: any, idx: number) => {
+                              // Group months by year
+                              const yearGroups: { [key: string]: number[] } =
+                                {};
+                              supplierTrendChartData.forEach(
+                                (item: any, idx: number) => {
                                   const year = item.yearLabel;
                                   if (!yearGroups[year]) {
                                     yearGroups[year] = [];
                                   }
                                   yearGroups[year].push(idx);
-                                });
+                                },
+                              );
 
-                                // Check if this index should show year label (between months 6 and 7)
-                                for (const year in yearGroups) {
-                                  const indices = yearGroups[year];
-                                  // For 12 months, position between month 6 and 7 (index 6)
-                                  const targetIndex =
-                                    indices[6] ||
-                                    indices[Math.floor(indices.length / 2)];
-                                  if (index === targetIndex) {
-                                    return value;
-                                  }
+                              // Check if this index should show year label (between months 6 and 7)
+                              for (const year in yearGroups) {
+                                const indices = yearGroups[year];
+                                // For 12 months, position between month 6 and 7 (index 6)
+                                const targetIndex =
+                                  indices[6] ||
+                                  indices[Math.floor(indices.length / 2)];
+                                if (index === targetIndex) {
+                                  return value;
                                 }
-
-                                return "";
-                              }}
-                            />
-                            <YAxis
-                              axisLine={false}
-                              tickLine={false}
-                              tick={{ fill: "#6b7280", fontSize: 12 }}
-                              tickFormatter={(value) =>
-                                value === 0
-                                  ? "0k"
-                                  : `${(value / 1000).toLocaleString("en-US", {
-                                      minimumFractionDigits:
-                                        (value / 1000) % 1 === 0 ? 0 : 2,
-                                      maximumFractionDigits: 2,
-                                    })}k`
                               }
-                            />
-                            <Tooltip
-                              wrapperStyle={{ zIndex: 1000 }}
-                              contentStyle={{
-                                backgroundColor: "#ffffff",
-                                border: "1px solid #e5e7eb",
-                                borderRadius: "8px",
-                                padding: "12px 16px",
-                                fontSize: "16px",
-                                lineHeight: "1.5",
-                                fontFamily: "inherit",
-                                boxShadow:
-                                  "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-                              }}
-                              labelStyle={{
-                                fontWeight: 700,
-                                color: "#111827",
-                                marginBottom: "8px",
-                                fontSize: "18px",
-                                lineHeight: "1.5",
-                              }}
-                              itemStyle={{
-                                color: "#111827",
-                                fontSize: "16px",
-                                lineHeight: "1.5",
-                                padding: "0px",
-                              }}
-                              formatter={(value: number) => [
-                                `${value.toLocaleString("en-US", {
-                                  minimumFractionDigits:
-                                    value % 1 === 0 ? 0 : 2,
-                                  maximumFractionDigits: 2,
-                                })}`,
-                                "Total Amount",
-                              ]}
-                              labelFormatter={(label, payload) => {
-                                // Convert abbreviated month to full month name
-                                const monthMap: { [key: string]: string } = {
-                                  Jan: "January",
-                                  Feb: "February",
-                                  Mar: "March",
-                                  Apr: "April",
-                                  May: "May",
-                                  Jun: "June",
-                                  Jul: "July",
-                                  Aug: "August",
-                                  Sep: "September",
-                                  Oct: "October",
-                                  Nov: "November",
-                                  Dec: "December",
-                                };
-                                const fullMonth = monthMap[label] || label;
-                                const year =
-                                  payload[0]?.payload?.yearLabel || "";
-                                return `${fullMonth} ${year}`;
-                              }}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="amount"
-                              stroke="#3b82f6"
-                              strokeWidth={2}
-                              dot={{
-                                fill: "#3b82f6",
-                                r: 2,
-                              }}
-                              activeDot={{
-                                r: 4,
-                                fill: "#3b82f6",
-                                stroke: "#fff",
-                                strokeWidth: 2,
-                              }}
-                              animationDuration={1500}
-                              xAxisId="primary"
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      );
-                    })()}
+
+                              return "";
+                            }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fill: "#6b7280", fontSize: 12 }}
+                            tickFormatter={(value) =>
+                              value === 0
+                                ? "0k"
+                                : `${(value / 1000).toLocaleString("en-US", {
+                                    minimumFractionDigits:
+                                      (value / 1000) % 1 === 0 ? 0 : 2,
+                                    maximumFractionDigits: 2,
+                                  })}k`
+                            }
+                          />
+                          <Tooltip
+                            wrapperStyle={{ zIndex: 1000 }}
+                            contentStyle={TOOLTIP_STYLE}
+                            labelStyle={{
+                              fontWeight: 700,
+                              color: "#111827",
+                              marginBottom: "8px",
+                              fontSize: "18px",
+                              lineHeight: "1.5",
+                            }}
+                            itemStyle={{
+                              color: "#111827",
+                              fontSize: "16px",
+                              lineHeight: "1.5",
+                              padding: "0px",
+                            }}
+                            formatter={(value: number) => [
+                              `${value.toLocaleString("en-US", {
+                                minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })}`,
+                              "Total Amount",
+                            ]}
+                            labelFormatter={(label, payload) => {
+                              // Convert abbreviated month to full month name
+                              const monthMap: { [key: string]: string } = {
+                                Jan: "January",
+                                Feb: "February",
+                                Mar: "March",
+                                Apr: "April",
+                                May: "May",
+                                Jun: "June",
+                                Jul: "July",
+                                Aug: "August",
+                                Sep: "September",
+                                Oct: "October",
+                                Nov: "November",
+                                Dec: "December",
+                              };
+                              const fullMonth = monthMap[label] || label;
+                              const year = payload[0]?.payload?.yearLabel || "";
+                              return `${fullMonth} ${year}`;
+                            }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="amount"
+                            stroke="#3b82f6"
+                            strokeWidth={2}
+                            dot={{
+                              fill: "#3b82f6",
+                              r: 2,
+                            }}
+                            activeDot={{
+                              r: 4,
+                              fill: "#3b82f6",
+                              stroke: "#fff",
+                              strokeWidth: 2,
+                            }}
+                            animationDuration={1500}
+                            xAxisId="primary"
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </ChartContainer>
               </div>
@@ -2736,15 +2711,7 @@ export function CostInsights({
                         Total Amount
                       </div>
                       <div className="text-lg font-semibold text-gray-900">
-                        {projectSpendData
-                          .reduce(
-                            (sum, project) => sum + project.totalAmount,
-                            0,
-                          )
-                          .toLocaleString(undefined, {
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 2,
-                          })}
+                        {formattedProjectTotalSpend}
                       </div>
                     </div>
                   }
@@ -2758,68 +2725,43 @@ export function CostInsights({
                       <>
                         {/* Horizontal Bar Chart */}
                         <div className="space-y-4">
-                          {projectSpendData.map((project, index) => {
-                            const maxSpend = Math.max(
-                              ...projectSpendData.map((p) => p.totalAmount),
-                            );
-                            const barWidth =
-                              maxSpend > 0
-                                ? (project.totalAmount / maxSpend) * 100
-                                : 0;
-                            const totalSpend = projectSpendData.reduce(
-                              (sum, p) => sum + p.totalAmount,
-                              0,
-                            );
-                            const percentage =
-                              totalSpend > 0
-                                ? (project.totalAmount / totalSpend) * 100
-                                : 0;
-
-                            return (
-                              <div
-                                key={project.projectCode}
-                                className="space-y-2 hover:font-bold cursor-pointer rounded-lg transition-colors p-4 -m-4 group"
-                                onClick={() =>
-                                  handleProjectClick(project.projectCode)
-                                }
-                              >
-                                <div className="flex justify-between items-center">
-                                  <span className="text-sm font-normal text-gray-900 min-w-[80px] group-hover:font-bold transition-all duration-200">
-                                    {project.projectCode}
-                                  </span>
-                                  <span className="text-sm font-normal text-gray-900 group-hover:font-bold transition-all duration-200">
-                                    {project.totalAmount.toLocaleString(
-                                      undefined,
-                                      {
-                                        minimumFractionDigits:
-                                          project.totalAmount % 1 === 0 ? 0 : 2,
-                                        maximumFractionDigits: 2,
-                                      },
+                          {projectChartData.map((project, index) => (
+                            <div
+                              key={project.projectCode}
+                              className="space-y-2 hover:font-bold cursor-pointer rounded-lg transition-colors p-4 -m-4 group"
+                              onClick={() =>
+                                handleProjectClick(project.projectCode)
+                              }
+                            >
+                              <div className="flex justify-between items-center">
+                                <span className="text-sm font-normal text-gray-900 min-w-[80px] group-hover:font-bold transition-all duration-200">
+                                  {project.projectCode}
+                                </span>
+                                <span className="text-sm font-normal text-gray-900 group-hover:font-bold transition-all duration-200">
+                                  {project.formattedTotal}
+                                </span>
+                              </div>
+                              <div className="relative">
+                                <div className="h-6 w-full bg-gray-100 rounded-full overflow-hidden">
+                                  <motion.div
+                                    initial={{ width: 0 }}
+                                    animate={{ width: project.barWidth + "%" }}
+                                    transition={{
+                                      duration: 0.8,
+                                      delay: index * 0.1,
+                                    }}
+                                    className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-end pr-2"
+                                  >
+                                    {project.barWidth > 10 && (
+                                      <span className="text-xs text-white font-medium">
+                                        {project.percentage}%
+                                      </span>
                                     )}
-                                  </span>
-                                </div>
-                                <div className="relative">
-                                  <div className="h-6 w-full bg-gray-100 rounded-full overflow-hidden">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: barWidth + "%" }}
-                                      transition={{
-                                        duration: 0.8,
-                                        delay: index * 0.1,
-                                      }}
-                                      className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-end pr-2"
-                                    >
-                                      {barWidth > 10 && (
-                                        <span className="text-xs text-white font-medium">
-                                          {percentage.toFixed(1)}%
-                                        </span>
-                                      )}
-                                    </motion.div>
-                                  </div>
+                                  </motion.div>
                                 </div>
                               </div>
-                            );
-                          })}
+                            </div>
+                          ))}
                         </div>
                       </>
                     )}
@@ -3057,42 +2999,7 @@ export function CostInsights({
                             }}
                           />
                           {/* Get unique categories from data */}
-                          {(() => {
-                            const allCategories = new Set<string>();
-                            projectCategoryMixData.forEach((project) => {
-                              Object.keys(project).forEach((key) => {
-                                if (key !== "project" && key !== "total") {
-                                  allCategories.add(key);
-                                }
-                              });
-                            });
-                            const categoryColors: { [key: string]: string } = {
-                              Service: "#72d572",
-                              Material: "#29b6f6",
-                              Equipment: "#ff9800",
-                              Maintenance: "#9c27b0",
-                              Other: "#90a4ae",
-                            };
-                            const categoryOrder = [
-                              "Other",
-                              "Material",
-                              "Service",
-                            ];
-                            return categoryOrder
-                              .filter((category) => allCategories.has(category))
-                              .map((category, index) => (
-                                <Bar
-                                  key={category}
-                                  dataKey={category}
-                                  stackId="a"
-                                  fill={
-                                    categoryColors[category] ||
-                                    `hsl(${index * 60}, 70%, 50%)`
-                                  }
-                                  radius={[4, 4, 4, 4]}
-                                />
-                              ));
-                          })()}
+                          {projectCategoryBars}
                         </BarChart>
                       </ResponsiveContainer>
                     )}
@@ -3316,18 +3223,6 @@ export function CostInsights({
                               : "No date"}
                           </p>
                         </div>
-                        <div className="text-right">
-                          <p className="text-xs text-gray-500 mb-1">
-                            Total Amount (Incl. VAT)
-                          </p>
-                          <p className="text-lg font-bold text-gray-900">
-                            {po.totalAmount.toLocaleString(undefined, {
-                              minimumFractionDigits:
-                                po.totalAmount % 1 === 0 ? 0 : 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </p>
-                        </div>
                       </div>
 
                       <div className="space-y-2">
@@ -3485,11 +3380,7 @@ export function CostInsights({
                             Total Amount (Incl. VAT)
                           </p>
                           <p className="text-lg font-bold text-gray-900">
-                            {po.totalAmount.toLocaleString(undefined, {
-                              minimumFractionDigits:
-                                po.totalAmount % 1 === 0 ? 0 : 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {formatCurrency(po.totalAmount)}
                           </p>
                         </div>
                       </div>
@@ -3568,11 +3459,7 @@ export function CostInsights({
                                         className="px-3 py-2 text-right font-normal text-gray-900"
                                         style={{ width: "20%" }}
                                       >
-                                        {item.amount.toLocaleString(undefined, {
-                                          minimumFractionDigits:
-                                            item.amount % 1 === 0 ? 0 : 2,
-                                          maximumFractionDigits: 2,
-                                        })}
+                                        {formatCurrency(item.amount)}
                                       </td>
                                     </tr>
                                   ),
@@ -3611,11 +3498,7 @@ export function CostInsights({
                                     className="px-3 py-2 text-right font-normal text-gray-900"
                                     style={{ width: "20%" }}
                                   >
-                                    {po.totalAmount.toLocaleString(undefined, {
-                                      minimumFractionDigits:
-                                        po.totalAmount % 1 === 0 ? 0 : 2,
-                                      maximumFractionDigits: 2,
-                                    })}
+                                    {formatCurrency(po.totalAmount)}
                                   </td>
                                 </tr>
                               )}
