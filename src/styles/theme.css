@@ -179,3 +179,108 @@
     line-height: 1.5;
   }
 }
+
+/* Recharts Legend Custom Styles */
+.recharts-default-legend .recharts-legend-item-text {
+  font-weight: 400 !important;
+  font-family: inherit;
+}
+
+.recharts-legend-item {
+  font-weight: 400 !important;
+}
+
+/* Recharts Grid Lines */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #e5e7eb !important;
+  stroke-dasharray: 3 3 !important;
+}
+
+/* Completely disable grey background hover effect */
+.recharts-bar-rectangle {
+  transition: filter 0.2s ease !important;
+}
+
+.recharts-bar-rectangle:hover {
+  filter: brightness(1.05) !important;
+  transform: none !important;
+}
+
+/* Remove grey background from active/hovered bars */
+.recharts-active-bar {
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: brightness(1.05) !important;
+}
+
+/* Target the tooltip cursor background */
+.recharts-bar-chart .recharts-tooltip-cursor {
+  background: transparent !important;
+}
+
+/* Remove any background overlay on hover */
+.recharts-bar .recharts-bar-background-rectangle {
+  display: none !important;
+}
+
+/* Disable the grey cell background on hover */
+.recharts-bar-cell:hover {
+  background: transparent !important;
+}
+
+/* Override any default hover styles */
+.recharts-bar:hover .recharts-bar-rectangle {
+  filter: brightness(1.05) !important;
+}
+
+/* Remove the cursor overlay */
+.recharts-tooltip-cursor {
+  display: none !important;
+}
+
+/* Additional aggressive rules to remove grey background */
+.recharts-bar-chart .recharts-bar-rectangle:hover {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.recharts-bar-chart .recharts-active-bar .recharts-bar-rectangle {
+  background: transparent !important;
+}
+
+/* Remove any hover background from bar groups */
+.recharts-bar-group:hover {
+  background: transparent !important;
+}
+
+/* Target all possible hover states */
+.recharts-bar-rectangle,
+.recharts-bar-rectangle:hover,
+.recharts-active-bar .recharts-bar-rectangle,
+.recharts-bar-group:hover .recharts-bar-rectangle {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Force remove any grey backgrounds */
+.recharts-bar-chart *:hover {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Specific override for active bar background */
+.recharts-active-bar {
+  background: none !important;
+  background-color: transparent !important;
+}
+
+/* Remove any background from bar cells */
+.recharts-bar-cell {
+  background: transparent !important;
+}
+
+.recharts-bar-cell:hover {
+  background: transparent !important;
+  box-shadow: none !important;
+}

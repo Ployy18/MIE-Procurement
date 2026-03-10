@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  LayoutDashboard,
+  BarChart3,
   PieChart,
   TrendingUp,
   Database,
@@ -16,7 +16,7 @@ interface SidebarProps {
 
 export function Sidebar({ currentView, onChangeView }: SidebarProps) {
   const menuItems = [
-    { id: "overview", label: "Procurement Overview", icon: LayoutDashboard },
+    { id: "overview", label: "Procurement Overview", icon: BarChart3 },
     { id: "insight", label: "Cost Insights", icon: PieChart },
     { id: "forecast", label: "Forecast & Planning", icon: TrendingUp },
   ];
@@ -27,14 +27,14 @@ export function Sidebar({ currentView, onChangeView }: SidebarProps) {
   ];
 
   return (
-    <div className="fixed left-0 top-0 h-full w-20 hover:w-64 bg-white border-r border-gray-200 flex flex-col z-50 transition-all duration-300 group overflow-hidden">
+    <div className="fixed left-0 top-0 h-full w-20 hover:w-64 bg-white border-r border-gray-200 flex flex-col z-50 transition-all duration-300 group overflow-visible">
       {/* Logo Section */}
       <div className="p-6 flex items-center space-x-3 whitespace-nowrap border-b border-gray-100">
         <div className="h-8 w-8 min-w-[2rem] rounded-lg bg-blue-600 flex items-center justify-center text-white">
-          <Package size={20} />
+          <img src="/image/Vector.svg" alt="MIE Logo" className="w-7 h-7" />
         </div>
         <span className="text-xl font-bold text-gray-900 tracking-tight opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-          CCTV Procure
+          MIE Procurement
         </span>
       </div>
 

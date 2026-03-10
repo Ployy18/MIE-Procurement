@@ -12,6 +12,15 @@ export default defineConfig({
   },
   assetsInclude: ["**/*.svg", "**/*.csv"],
   define: {
-    'import.meta.env': 'import.meta.env',
+    "import.meta.env": "import.meta.env",
+  },
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 });

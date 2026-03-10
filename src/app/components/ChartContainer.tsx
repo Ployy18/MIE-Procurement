@@ -7,6 +7,7 @@ interface ChartContainerProps {
   children: React.ReactNode;
   className?: string;
   delay?: number;
+  headerAction?: React.ReactNode;
 }
 
 export function ChartContainer({
@@ -15,21 +16,25 @@ export function ChartContainer({
   children,
   className = "",
   delay = 0,
+  headerAction,
 }: ChartContainerProps) {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5, delay }}
-      className={`relative flex flex-col rounded-2xl bg-white shadow-md border border-gray-200 p-6 ${className}`}
+      className={`relative flex flex-col rounded-2xl bg-white shadow-md border border-gray-200 p-8 ${className}`}
     >
-      <div className="mb-6">
-        <h3 className="text-lg font-semibold text-gray-900 tracking-tight">
-          {title}
-        </h3>
-        {subtitle && <p className="text-sm text-gray-600 mt-1">{subtitle}</p>}
+      <div className="mb-6 flex justify-between items-center">
+        <div>
+          <h3 className="text-xl font-semibold text-gray-900 tracking-tight">
+            {title}
+          </h3>
+          {subtitle && <p className="text-sm text-gray-600 mt-1">{subtitle}</p>}
+        </div>
+        {headerAction && <div>{headerAction}</div>}
       </div>
-      <div className="flex-1 min-h-[200px] w-full">{children}</div>
+      <div className="flex-1 w-full">{children}</div>
     </motion.div>
   );
 }
