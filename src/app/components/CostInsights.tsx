@@ -394,16 +394,18 @@ const buildSupplierTrend = (rows: any[]) => {
     const dateStr = row.Date || row.date || row["DATE"];
     if (!dateStr) return;
 
+    let date: Date | null = null;
+
     if (typeof dateStr === "string") {
       if (dateStr.includes("/")) {
         const [d, m, y] = dateStr.split("/").map(Number);
         const finalYear = y < 2400 ? y : y - 543;
-        var date = new Date(finalYear, m - 1, d);
+        date = new Date(finalYear, m - 1, d);
       } else if (dateStr.includes("-")) {
-        var date = new Date(dateStr);
+        date = new Date(dateStr);
       }
     } else {
-      var date = new Date(dateStr);
+      date = new Date(dateStr);
     }
 
     if (!date || isNaN(date.getTime())) return;
