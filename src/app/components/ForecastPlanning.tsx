@@ -19,6 +19,15 @@ import {
   getProcurementLineData,
 } from "../../services/googleSheetsService";
 import { LoadingState } from "./ui/LoadingState";
+import {
+  THAI_MONTHS,
+  convertToThaiMonth,
+  convertToThaiMonthFull,
+  getThaiMonthFullByIndex,
+} from "../utils/thaiMonthUtils";
+
+// Chart Utils
+import { shouldShowYearLabel } from "../../utils/chartAxisUtils";
 
 // TypeScript types for better type safety
 type MonthlySpend = {
@@ -255,7 +264,7 @@ const categorizeItemCode = (code: string): string => {
 
 interface SheetDataRow {
   Date?: string;
-  "Total Amount"?: string | number;
+  "Net Amount"?: string | number;
   [key: string]: any;
 }
 
@@ -690,8 +699,8 @@ const transformProjectBurnRateData = (
   let totalAmountBefore = 0;
 
   sheetData.forEach((row) => {
-    // 1. Parse Total Amount: remove commas and whitespace
-    const amountStrRaw = String(row["Total Amount"] || "0");
+    // 1. Parse Net Amount: remove commas and whitespace
+    const amountStrRaw = String(row["Net Amount"] || "0");
     const amountStrClean = amountStrRaw.replace(/,/g, "").trim();
     const amount = parseFloat(amountStrClean);
 
@@ -788,7 +797,7 @@ const transformProjectBurnRateData = (
     result.push({
       month: d.month,
       year: d.year,
-      monthLabel: d.month,
+      monthLabel: convertToThaiMonth(d.month),
       yearLabel: d.year,
       date: d.date,
       monthly_spend: d.monthly_spend,
@@ -805,7 +814,7 @@ const transformProjectBurnRateData = (
 const transformSheetData = (sheetData: SheetDataRow[]) => {
   // Group by month-year and sum amounts from procurement_head table
   const monthlyData = sheetData.reduce((acc: Record<string, number>, row) => {
-    // Strictly use procurement_head.Date and procurement_head.Total Amount
+    // Strictly use procurement_head.Date and procurement_head.Net Amount
     const dateStr = row.Date;
     if (!dateStr) return acc;
 
@@ -815,7 +824,7 @@ const transformSheetData = (sheetData: SheetDataRow[]) => {
     const monthYearKey = `${year}-${month}`;
 
     // Fix numeric parsing bug with commas
-    const amount = parseNumber(row["Total Amount"]);
+    const amount = parseNumber(row["Net Amount"]);
 
     // Add validation against invalid values
     if (isNaN(amount) || amount <= 0) return acc;
@@ -1772,7 +1781,7 @@ const ForecastPlanning: React.FC = () => {
                     className="recharts-legend-item-text"
                     style={{ color: "rgb(59, 130, 246)" }}
                   >
-                    Total Amount
+                    Net Amount
                   </span>
                 </li>
                 <li
@@ -1843,7 +1852,7 @@ const ForecastPlanning: React.FC = () => {
                   const [mon, yr] = [d.month, d.year];
                   return {
                     ...d,
-                    monthLabel: mon.slice(0, 3),
+                    monthLabel: convertToThaiMonth(mon.slice(0, 3)),
                     yearLabel: yr,
                   };
                 });
@@ -1887,7 +1896,7 @@ const ForecastPlanning: React.FC = () => {
                         xAxisId="primary"
                         tickMargin={5}
                         tickFormatter={(value) =>
-                          MONTHS[new Date(value).getMonth()]
+                          THAI_MONTHS[new Date(value).getMonth()]
                         }
                       />
                       <XAxis
@@ -1902,23 +1911,9 @@ const ForecastPlanning: React.FC = () => {
                         height={10}
                         tick={{ dy: -2 }}
                         interval={0}
-                        tickFormatter={(value, index) => {
-                          if (!chartData || chartData.length === 0) return "";
-                          const yearGroups: { [key: string]: number[] } = {};
-                          chartData.forEach((item: any, idx: number) => {
-                            const year = item.yearLabel;
-                            if (!yearGroups[year]) yearGroups[year] = [];
-                            yearGroups[year].push(idx);
-                          });
-                          for (const year in yearGroups) {
-                            const indices = yearGroups[year];
-                            const targetIndex =
-                              indices[6] ||
-                              indices[Math.floor(indices.length / 2)];
-                            if (index === targetIndex) return value;
-                          }
-                          return "";
-                        }}
+                        tickFormatter={(value, index) =>
+                          shouldShowYearLabel(chartData, index, "yearLabel")
+                        }
                       />
                       <YAxis
                         axisLine={false}
@@ -2001,10 +1996,11 @@ const ForecastPlanning: React.FC = () => {
                         labelFormatter={(label, payload) => {
                           if (payload?.[0]) {
                             const date = new Date(label);
-                            return date.toLocaleString("en-US", {
-                              month: "long",
-                              year: "numeric",
-                            });
+                            const thaiMonth = getThaiMonthFullByIndex(
+                              date.getMonth(),
+                            );
+                            const year = date.getFullYear();
+                            return `${thaiMonth} ${year}`;
                           }
                           return label;
                         }}
@@ -2040,7 +2036,7 @@ const ForecastPlanning: React.FC = () => {
                         }}
                         animationDuration={1500}
                         xAxisId="primary"
-                        name="Total Amount"
+                        name="Net Amount"
                       />
                       <Line
                         type="monotone"
@@ -2229,28 +2225,13 @@ const ForecastPlanning: React.FC = () => {
                     height={10}
                     tick={{ dy: -2 }}
                     interval={0}
-                    tickFormatter={(value, index) => {
-                      if (
-                        !projectBurnRatePlotData ||
-                        projectBurnRatePlotData.length === 0
+                    tickFormatter={(value, index) =>
+                      shouldShowYearLabel(
+                        projectBurnRatePlotData,
+                        index,
+                        "yearLabel",
                       )
-                        return "";
-                      const yearGroups: { [key: string]: number[] } = {};
-                      projectBurnRatePlotData.forEach(
-                        (item: ProjectBurnRateData, idx: number) => {
-                          const year = item.yearLabel;
-                          if (!yearGroups[year]) yearGroups[year] = [];
-                          yearGroups[year].push(idx);
-                        },
-                      );
-                      for (const year in yearGroups) {
-                        const indices = yearGroups[year];
-                        const targetIndex =
-                          indices[6] || indices[Math.floor(indices.length / 2)];
-                        if (index === targetIndex) return value;
-                      }
-                      return "";
-                    }}
+                    }
                   />
                   <Tooltip
                     contentStyle={{
@@ -2287,9 +2268,9 @@ const ForecastPlanning: React.FC = () => {
                       ];
                     }}
                     labelFormatter={(label: any, payload: any) => {
-                      const fullMonth = MONTH_MAP[label] || label;
+                      const thaiMonthFull = convertToThaiMonthFull(label);
                       const year = payload?.[0]?.payload?.year || "";
-                      return `${fullMonth} ${year}`;
+                      return `${thaiMonthFull} ${year}`;
                     }}
                   />
                   <Line

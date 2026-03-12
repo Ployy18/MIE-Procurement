@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence } from "framer-motion";
 
 import {
   DataCleaningService,
@@ -52,6 +52,27 @@ import {
 
 import { toast } from "sonner";
 
+// Shared column width mapping for consistency across components
+const columnWidthMap: Record<string, string> = {
+  date: "w-[120px]",
+  "po number": "w-[130px]",
+  supplier: "w-[250px]",
+  description: "w-[350px]",
+  "item code": "w-[140px]",
+  category: "w-[120px]",
+  quantity: "w-[100px]",
+  unit: "w-[90px]",
+  "unit price": "w-[130px]",
+  "net amount": "w-[130px]",
+  vat: "w-[130px]",
+  "total amount": "w-[130px]",
+  "total price": "w-[130px]",
+  project: "w-[120px]",
+  "project code": "w-[120px]",
+  "source file": "w-[220px]",
+  "total records": "w-[140px]",
+};
+
 // Helper function to get category styling
 const getCategoryStyle = (category: string) => {
   const normalizedCategory = category?.toLowerCase().trim();
@@ -74,7 +95,10 @@ const formatNumberWithCommas = (value: any) => {
   const num =
     typeof value === "string" ? parseFloat(value.replace(/,/g, "")) : value;
   if (isNaN(num)) return value;
-  return num.toLocaleString("en-US");
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: value.toString().includes(".") ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 };
 
 interface DataUploadProps {
@@ -103,6 +127,12 @@ export function DataUpload({ onChangeView }: DataUploadProps) {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+
+  // Pagination states
+  const [allDataPage, setAllDataPage] = useState(1);
+  const [headDataPage, setHeadDataPage] = useState(1);
+  const [lineDataPage, setLineDataPage] = useState(1);
+  const pageSize = 50;
   const formatNumber = (value?: number | string) => {
     if (value === undefined || value === null || value === "") return "";
 
@@ -286,6 +316,10 @@ export function DataUpload({ onChangeView }: DataUploadProps) {
     setHistoryIndex(-1);
     setHasUnsavedChanges(false);
     setSelectedRows(new Set());
+    // Reset pagination
+    setAllDataPage(1);
+    setHeadDataPage(1);
+    setLineDataPage(1);
   };
 
   // Edit mode functions
@@ -741,278 +775,545 @@ export function DataUpload({ onChangeView }: DataUploadProps) {
                   <TabsContent value="all" className="m-0">
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <div className="overflow-x-auto overflow-y-auto max-h-96">
-                        <table className="w-full text-sm sticky top-0 bg-white">
+                        <table className="w-full text-sm table-fixed">
                           <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                             <tr>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["date"] || "w-[120px]"}`}
+                              >
                                 Date
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["po number"] || "w-[150px]"}`}
+                              >
                                 PO Number
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["supplier"] || "w-[220px]"}`}
+                              >
                                 Supplier
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["description"] || "w-[320px]"}`}
+                              >
                                 Description
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[80px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["item code"] || "w-[120px]"}`}
+                              >
                                 Item Code
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["category"] || "w-[120px]"}`}
+                              >
                                 Category
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["quantity"] || "w-[100px]"}`}
+                              >
                                 Quantity
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["unit"] || "w-[90px]"}`}
+                              >
                                 Unit
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["unit price"] || "w-[140px]"}`}
+                              >
                                 Unit Price
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["net amount"] || "w-[140px]"}`}
+                              >
                                 Net Amount
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["vat"] || "w-[120px]"}`}
+                              >
                                 VAT
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["total amount"] || "w-[140px]"}`}
+                              >
                                 Total Amount
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["project"] || "w-[120px]"}`}
+                              >
                                 Project
                               </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200">
-                            {cleanedData.slice(0, 50).map((row, idx) => {
-                              const isHead = (row as any)._isHead;
-                              const isLine = (row as any)._isLine;
+                            {(() => {
+                              const start = (allDataPage - 1) * pageSize;
+                              const end = start + pageSize;
+                              const visibleRows = cleanedData.slice(start, end);
+                              return visibleRows.map((row, idx) => {
+                                const isHead = (row as any)._isHead;
+                                const isLine = (row as any)._isLine;
 
-                              return (
-                                <tr key={idx} className="hover:bg-gray-50">
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {row.date}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    <div className="flex items-center gap-2">
-                                      {row.poNumber}
-                                      {isHead && (
-                                        <span className="text-[9px] bg-blue-600 text-white font-black px-1.5 py-0.5 rounded shadow-sm">
-                                          HEAD
-                                        </span>
-                                      )}
-                                      {isLine && (
-                                        <span className="text-[9px] bg-green-600 text-white font-black px-1.5 py-0.5 rounded shadow-sm">
-                                          LINE
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {row.supplier}
-                                  </td>
-                                  <td
-                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 max-w-xs truncate"
-                                    title={row.description}
+                                return (
+                                  <tr
+                                    key={start + idx}
+                                    className="hover:bg-gray-50"
                                   >
-                                    {row.description?.substring(0, 50) +
-                                      (row.description?.length > 50
-                                        ? "..."
-                                        : "")}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {row.itemCode}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
-                                    {row.category ? (
-                                      <span
-                                        className={`px-2 py-1 rounded-full text-xs font-medium ${getCategoryStyle(row.category)}`}
-                                      >
-                                        {row.category}
-                                      </span>
-                                    ) : (
-                                      ""
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
-                                    {row.quantity}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
-                                    {row.unit}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {formatNumberWithCommas(row.unitPrice)}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {formatNumberWithCommas(row.netAmount)}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {formatNumberWithCommas(row.totalVat)}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {formatNumberWithCommas(row.totalPrice)}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
-                                    {row.projectCode}
-                                  </td>
-                                </tr>
-                              );
-                            })}
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={row.date}
+                                    >
+                                      {row.date}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={row.poNumber}
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        {row.poNumber}
+                                        {isHead && (
+                                          <span className="text-[9px] bg-blue-600 text-white font-black px-1.5 py-0.5 rounded shadow-sm flex-shrink-0">
+                                            HEAD
+                                          </span>
+                                        )}
+                                        {isLine && (
+                                          <span className="text-[9px] bg-green-600 text-white font-black px-1.5 py-0.5 rounded shadow-sm flex-shrink-0">
+                                            LINE
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={row.supplier}
+                                    >
+                                      {row.supplier}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={row.description}
+                                    >
+                                      {row.description}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={row.itemCode}
+                                    >
+                                      {row.itemCode}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                      title={row.category}
+                                    >
+                                      {row.category ? (
+                                        <span
+                                          className={`px-2 py-1 rounded-full text-xs font-medium ${getCategoryStyle(row.category)}`}
+                                        >
+                                          {row.category}
+                                        </span>
+                                      ) : (
+                                        ""
+                                      )}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                      title={row.quantity?.toString()}
+                                    >
+                                      {formatNumberWithCommas(row.quantity)}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                      title={row.unit}
+                                    >
+                                      {row.unit}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={formatNumberWithCommas(
+                                        row.unitPrice,
+                                      )}
+                                    >
+                                      {formatNumberWithCommas(row.unitPrice)}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={formatNumberWithCommas(
+                                        row.netAmount,
+                                      )}
+                                    >
+                                      {formatNumberWithCommas(row.netAmount)}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={formatNumberWithCommas(
+                                        row.totalVat,
+                                      )}
+                                    >
+                                      {formatNumberWithCommas(row.totalVat)}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                      title={formatNumberWithCommas(
+                                        row.totalPrice,
+                                      )}
+                                    >
+                                      {formatNumberWithCommas(row.totalPrice)}
+                                    </td>
+                                    <td
+                                      className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                      title={row.projectCode}
+                                    >
+                                      {row.projectCode}
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            })()}
                           </tbody>
                         </table>
                       </div>
+                      {/* Pagination Controls */}
+                      {cleanedData.length > pageSize && (
+                        <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
+                          <div className="text-sm text-gray-700">
+                            Showing {(allDataPage - 1) * pageSize + 1}-
+                            {Math.min(
+                              allDataPage * pageSize,
+                              cleanedData.length,
+                            )}{" "}
+                            of {cleanedData.length} rows
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              onClick={() =>
+                                setAllDataPage((prev) => Math.max(1, prev - 1))
+                              }
+                              disabled={allDataPage === 1}
+                              variant="outline"
+                              size="sm"
+                            >
+                              Previous
+                            </Button>
+                            <span className="text-sm text-gray-600">
+                              Page {allDataPage} of{" "}
+                              {Math.ceil(cleanedData.length / pageSize)}
+                            </span>
+                            <Button
+                              onClick={() =>
+                                setAllDataPage((prev) =>
+                                  Math.min(
+                                    Math.ceil(cleanedData.length / pageSize),
+                                    prev + 1,
+                                  ),
+                                )
+                              }
+                              disabled={
+                                allDataPage >=
+                                Math.ceil(cleanedData.length / pageSize)
+                              }
+                              variant="outline"
+                              size="sm"
+                            >
+                              Next
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
 
                   <TabsContent value="head" className="m-0">
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <div className="overflow-x-auto overflow-y-auto max-h-96">
-                        <table className="w-full text-sm sticky top-0 bg-white">
+                        <table className="w-full text-sm table-fixed">
                           <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                             <tr>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["date"] || "w-[120px]"}`}
+                              >
                                 Date
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[140px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["po number"] || "w-[150px]"}`}
+                              >
                                 PO Number
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["supplier"] || "w-[220px]"}`}
+                              >
                                 Supplier
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["description"] || "w-[320px]"}`}
+                              >
                                 Description
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["net amount"] || "w-[140px]"}`}
+                              >
                                 Net Amount
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["vat"] || "w-[120px]"}`}
+                              >
                                 VAT
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["total amount"] || "w-[140px]"}`}
+                              >
                                 Total Amount
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["project"] || "w-[120px]"}`}
+                              >
                                 Project
                               </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200">
-                            {multiTableData?.procurement_head
-                              ?.slice(0, 50)
-                              .map((row, idx) => (
-                                <tr key={idx} className="hover:bg-gray-50">
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                            {(() => {
+                              const headData =
+                                multiTableData?.procurement_head || [];
+                              const start = (headDataPage - 1) * pageSize;
+                              const end = start + pageSize;
+                              const visibleRows = headData.slice(start, end);
+                              return visibleRows.map((row, idx) => (
+                                <tr
+                                  key={start + idx}
+                                  className="hover:bg-gray-50"
+                                >
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.date}
+                                  >
                                     {row.date}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    <div className="flex items-center gap-2">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.poNumber}
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
                                       {row.poNumber}
                                     </div>
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.supplier}
+                                  >
                                     {row.supplier}
                                   </td>
                                   <td
-                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 max-w-xs truncate"
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
                                     title={row.description}
                                   >
-                                    {row.description?.substring(0, 50) +
-                                      (row.description?.length > 50
-                                        ? "..."
-                                        : "")}
+                                    {row.description}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={formatNumberWithCommas(
+                                      row.netAmount,
+                                    )}
+                                  >
                                     {formatNumberWithCommas(row.netAmount)}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={formatNumberWithCommas(row.totalVat)}
+                                  >
                                     {formatNumberWithCommas(row.totalVat)}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={formatNumberWithCommas(
+                                      row.totalPrice,
+                                    )}
+                                  >
                                     {formatNumberWithCommas(row.totalPrice)}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                    title={row.projectCode}
+                                  >
                                     {row.projectCode}
                                   </td>
                                 </tr>
-                              ))}
+                              ));
+                            })()}
                           </tbody>
                         </table>
                       </div>
+                      {/* Pagination Controls */}
+                      {(multiTableData?.procurement_head?.length || 0) >
+                        pageSize && (
+                        <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
+                          <div className="text-sm text-gray-700">
+                            Showing {(headDataPage - 1) * pageSize + 1}-
+                            {Math.min(
+                              headDataPage * pageSize,
+                              multiTableData?.procurement_head?.length || 0,
+                            )}{" "}
+                            of {multiTableData?.procurement_head?.length || 0}{" "}
+                            rows
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              onClick={() =>
+                                setHeadDataPage((prev) => Math.max(1, prev - 1))
+                              }
+                              disabled={headDataPage === 1}
+                              variant="outline"
+                              size="sm"
+                            >
+                              Previous
+                            </Button>
+                            <span className="text-sm text-gray-600">
+                              Page {headDataPage} of{" "}
+                              {Math.ceil(
+                                (multiTableData?.procurement_head?.length ||
+                                  0) / pageSize,
+                              )}
+                            </span>
+                            <Button
+                              onClick={() =>
+                                setHeadDataPage((prev) =>
+                                  Math.min(
+                                    Math.ceil(
+                                      (multiTableData?.procurement_head
+                                        ?.length || 0) / pageSize,
+                                    ),
+                                    prev + 1,
+                                  ),
+                                )
+                              }
+                              disabled={
+                                headDataPage >=
+                                Math.ceil(
+                                  (multiTableData?.procurement_head?.length ||
+                                    0) / pageSize,
+                                )
+                              }
+                              variant="outline"
+                              size="sm"
+                            >
+                              Next
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
 
                   <TabsContent value="line" className="m-0">
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <div className="overflow-x-auto overflow-y-auto max-h-96">
-                        <table className="w-full text-sm sticky top-0 bg-white">
+                        <table className="w-full text-sm table-fixed">
                           <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                             <tr>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["date"] || "w-[120px]"}`}
+                              >
                                 Date
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[140px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["po number"] || "w-[150px]"}`}
+                              >
                                 PO Number
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["supplier"] || "w-[220px]"}`}
+                              >
                                 Supplier
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["description"] || "w-[320px]"}`}
+                              >
                                 Description
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[80px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["item code"] || "w-[120px]"}`}
+                              >
                                 Item Code
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["category"] || "w-[120px]"}`}
+                              >
                                 Category
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["quantity"] || "w-[100px]"}`}
+                              >
                                 Quantity
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["unit"] || "w-[90px]"}`}
+                              >
                                 Unit
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["unit price"] || "w-[140px]"}`}
+                              >
                                 Unit Price
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["total amount"] || "w-[140px]"}`}
+                              >
                                 Total Amount
                               </th>
-                              <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap min-w-[120px] text-center">
+                              <th
+                                className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center ${columnWidthMap["project"] || "w-[120px]"}`}
+                              >
                                 Project
                               </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200">
-                            {(multiTableData?.procurement_line || [])
-                              .slice(0, 50)
-                              .map((row, idx) => (
-                                <tr key={idx} className="hover:bg-gray-50">
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                            {(() => {
+                              const lineData =
+                                multiTableData?.procurement_line || [];
+                              const start = (lineDataPage - 1) * pageSize;
+                              const end = start + pageSize;
+                              const visibleRows = lineData.slice(start, end);
+                              return visibleRows.map((row, idx) => (
+                                <tr
+                                  key={start + idx}
+                                  className="hover:bg-gray-50"
+                                >
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.date}
+                                  >
                                     {row.date}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    <div className="flex items-center gap-2">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.poNumber}
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
                                       {row.poNumber}
                                     </div>
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.supplier}
+                                  >
                                     {row.supplier}
                                   </td>
                                   <td
-                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 max-w-xs truncate"
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
                                     title={row.description}
                                   >
-                                    {row.description?.substring(0, 50) +
-                                      (row.description?.length > 50
-                                        ? "..."
-                                        : "")}
+                                    {row.description}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={row.itemCode}
+                                  >
                                     {row.itemCode}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                    title={row.category}
+                                  >
                                     {row.category ? (
                                       <span
                                         className={`px-2 py-1 rounded-full text-xs font-medium ${getCategoryStyle(row.category)}`}
@@ -1023,26 +1324,104 @@ export function DataUpload({ onChangeView }: DataUploadProps) {
                                       ""
                                     )}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
-                                    {row.quantity}
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                    title={row.quantity?.toString()}
+                                  >
+                                    {formatNumberWithCommas(row.quantity)}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                    title={row.unit}
+                                  >
                                     {row.unit}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={formatNumberWithCommas(
+                                      row.unitPrice,
+                                    )}
+                                  >
                                     {formatNumberWithCommas(row.unitPrice)}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
-                                    {formatNumberWithCommas(row.amount)}
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis"
+                                    title={formatNumberWithCommas(
+                                      row.totalPrice,
+                                    )}
+                                  >
+                                    {formatNumberWithCommas(row.totalPrice)}
                                   </td>
-                                  <td className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 whitespace-nowrap text-center">
+                                  <td
+                                    className="px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis text-center"
+                                    title={row.projectCode}
+                                  >
                                     {row.projectCode}
                                   </td>
                                 </tr>
-                              ))}
+                              ));
+                            })()}
                           </tbody>
                         </table>
                       </div>
+                      {/* Pagination Controls */}
+                      {(multiTableData?.procurement_line?.length || 0) >
+                        pageSize && (
+                        <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
+                          <div className="text-sm text-gray-700">
+                            Showing {(lineDataPage - 1) * pageSize + 1}-
+                            {Math.min(
+                              lineDataPage * pageSize,
+                              multiTableData?.procurement_line?.length || 0,
+                            )}{" "}
+                            of {multiTableData?.procurement_line?.length || 0}{" "}
+                            rows
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              onClick={() =>
+                                setLineDataPage((prev) => Math.max(1, prev - 1))
+                              }
+                              disabled={lineDataPage === 1}
+                              variant="outline"
+                              size="sm"
+                            >
+                              Previous
+                            </Button>
+                            <span className="text-sm text-gray-600">
+                              Page {lineDataPage} of{" "}
+                              {Math.ceil(
+                                (multiTableData?.procurement_line?.length ||
+                                  0) / pageSize,
+                              )}
+                            </span>
+                            <Button
+                              onClick={() =>
+                                setLineDataPage((prev) =>
+                                  Math.min(
+                                    Math.ceil(
+                                      (multiTableData?.procurement_line
+                                        ?.length || 0) / pageSize,
+                                    ),
+                                    prev + 1,
+                                  ),
+                                )
+                              }
+                              disabled={
+                                lineDataPage >=
+                                Math.ceil(
+                                  (multiTableData?.procurement_line?.length ||
+                                    0) / pageSize,
+                                )
+                              }
+                              variant="outline"
+                              size="sm"
+                            >
+                              Next
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
                 </Tabs>

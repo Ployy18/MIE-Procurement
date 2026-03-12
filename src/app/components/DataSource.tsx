@@ -38,14 +38,56 @@ import {
   SheetData,
 } from "../../services/googleSheetsService";
 
+// Shared column width mapping for consistency across components
+const columnWidthMap: Record<string, string> = {
+  date: "w-[120px]",
+  "po number": "w-[130px]",
+  supplier: "w-[250px]",
+  description: "w-[350px]",
+  "item code": "w-[140px]",
+  category: "w-[120px]",
+  quantity: "w-[100px]",
+  unit: "w-[90px]",
+  "unit price": "w-[130px]",
+  "net amount": "w-[130px]",
+  vat: "w-[130px]",
+  "total amount": "w-[130px]",
+  "total price": "w-[130px]",
+  project: "w-[120px]",
+  "project code": "w-[120px]",
+  "source file": "w-[220px]",
+  "total records": "w-[140px]",
+};
+
 // Helper function to format numbers with commas
 const formatNumberWithCommas = (value: any) => {
   if (value === null || value === undefined || value === "") return "";
   const num =
     typeof value === "string" ? parseFloat(value.replace(/,/g, "")) : value;
   if (isNaN(num)) return value;
-  return num.toLocaleString("en-US");
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: value.toString().includes(".") ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 };
+
+// Safe decimal formatting helper - only formats if decimal point exists
+function formatDecimalIfExists(value: any) {
+  if (value === null || value === undefined || value === "") return value;
+
+  const stringValue = value.toString();
+
+  // Only format numbers that already contain a decimal point
+  if (!stringValue.includes(".")) return value;
+
+  const num = parseFloat(stringValue.replace(/,/g, ""));
+  if (isNaN(num)) return value;
+
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 // Helper function to get display name for sheet
 const getSheetDisplayName = (sheetName: string) => {
@@ -880,25 +922,21 @@ export function DataSource() {
               ) : filteredData.length > 0 ? (
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
                   <div className="overflow-x-auto overflow-y-auto max-h-96">
-                    <table className="w-full text-sm sticky top-0 bg-white">
+                    <table className="w-full text-sm table-fixed">
                       <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                         <tr>
                           {selectedTab === "upload_logs" && isEditMode && (
-                            <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 w-12">
+                            <th className="px-2 py-2 font-medium text-gray-900 border-r border-gray-200 w-8 text-center">
                               {/* No select all checkbox for single selection mode */}
                             </th>
                           )}
                           {Object.keys(filteredData[0]).map((header, index) => (
                             <th
                               key={index}
-                              className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 ${
-                                header.toLowerCase() === "item code"
-                                  ? "min-w-[80px] max-w-[120px]"
-                                  : header.toLowerCase() === "po number" ||
-                                      header.toLowerCase() === "source file"
-                                    ? "min-w-[120px] max-w-[180px]"
-                                    : "min-w-[120px] max-w-[200px]"
-                              } text-center`}
+                              className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 text-center ${
+                                columnWidthMap[header.toLowerCase()] ||
+                                "w-[120px]"
+                              }`}
                             >
                               <span className="block truncate" title={header}>
                                 {header}
@@ -914,7 +952,7 @@ export function DataSource() {
                             className="hover:bg-gray-50 transition-colors cursor-default"
                           >
                             {selectedTab === "upload_logs" && isEditMode && (
-                              <td className="px-4 py-3 border-r border-gray-200">
+                              <td className="px-2 py-2 border-r border-gray-200 w-8 text-center">
                                 <input
                                   type="checkbox"
                                   checked={selectedRows.has(rowIndex)}
@@ -934,20 +972,7 @@ export function DataSource() {
                             {Object.values(row).map((value, colIndex) => (
                               <td
                                 key={colIndex}
-                                className={`px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 ${
-                                  Object.keys(filteredData[0])[
-                                    colIndex
-                                  ].toLowerCase() === "description"
-                                    ? "max-w-xs truncate"
-                                    : Object.keys(filteredData[0])[
-                                          colIndex
-                                        ].toLowerCase() === "po number" ||
-                                        Object.keys(filteredData[0])[
-                                          colIndex
-                                        ].toLowerCase() === "source file"
-                                      ? "max-w-[180px] truncate"
-                                      : "whitespace-nowrap"
-                                } ${
+                                className={`px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis ${
                                   [
                                     "category",
                                     "quantity",
@@ -963,37 +988,13 @@ export function DataSource() {
                                     ? "text-center"
                                     : ""
                                 }`}
+                                title={value?.toString() || ""}
                               >
                                 {(() => {
                                   const headerKey = Object.keys(
                                     filteredData[0],
                                   )[colIndex].toLowerCase();
                                   const stringValue = value?.toString() || "";
-
-                                  if (headerKey === "description") {
-                                    return (
-                                      <span title={stringValue}>
-                                        {stringValue.substring(0, 50) +
-                                          (stringValue.length > 50
-                                            ? "..."
-                                            : "")}
-                                      </span>
-                                    );
-                                  }
-
-                                  if (
-                                    headerKey === "po number" ||
-                                    headerKey === "source file"
-                                  ) {
-                                    return (
-                                      <span
-                                        title={stringValue}
-                                        className="block truncate"
-                                      >
-                                        {stringValue}
-                                      </span>
-                                    );
-                                  }
 
                                   if (headerKey === "category") {
                                     if (!stringValue || stringValue === "-")

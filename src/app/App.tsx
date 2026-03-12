@@ -11,7 +11,11 @@ import { motion, AnimatePresence } from "motion/react";
 
 export default function App() {
   const [currentView, setCurrentView] = useState("overview");
-  const [filters, setFilters] = useState({ year: "all", project: "all" });
+  const [filters, setFilters] = useState({
+    year: "all",
+    project: "all",
+    months: [] as string[],
+  });
 
   const getTitle = () => {
     switch (currentView) {
@@ -31,8 +35,13 @@ export default function App() {
   const handleFilterChange = (newFilters: {
     year: string;
     project: string;
+    months?: string[];
   }) => {
-    setFilters(newFilters);
+    setFilters({
+      year: newFilters.year,
+      project: newFilters.project,
+      months: newFilters.months || [],
+    });
   };
 
   return (

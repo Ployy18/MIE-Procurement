@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 import {
   TrendingUp,
@@ -19,6 +19,9 @@ import {
 
 import { motion } from "motion/react";
 
+// Chart Utils
+import { shouldShowYearLabel } from "../../utils/chartAxisUtils";
+
 import {
   BarChart,
   Bar,
@@ -38,6 +41,12 @@ import {
 import { ChartContainer } from "./ChartContainer";
 
 import { LoadingState } from "./ui/LoadingState";
+import {
+  THAI_MONTHS,
+  convertToThaiMonth,
+  convertToThaiMonthFull,
+  getThaiMonthFullByIndex,
+} from "../utils/thaiMonthUtils";
 
 import {
   getTab1Data,
@@ -335,7 +344,8 @@ const buildProjectSpend = (rows: any[]) => {
     const projectCode =
       row.Project || row.projectCode || row["Project Code"] || "Unknown";
     acc[projectCode] =
-      (acc[projectCode] || 0) + parseAmount(row["Total Amount"]);
+      (acc[projectCode] || 0) +
+      parseAmount(row["Net Amount"] || row["NET AMOUNT"] || row.netAmount || 0);
     return acc;
   }, {});
 
@@ -384,8 +394,9 @@ const buildSupplierTrend = (rows: any[]) => {
   rows.forEach((row: any) => {
     const supplier = (row.Supplier || row.supplierName || "Unknown").trim();
     const amount = parseAmount(
-      row["Total Amount"] ||
-        row["TOTAL AMOUNT"] ||
+      row["Net Amount"] ||
+        row["NET AMOUNT"] ||
+        row.netAmount ||
         row.totalAmount ||
         row.totalPrice ||
         0,
@@ -511,7 +522,7 @@ const buildPOVolumeData = (rows: any[], filters: any) => {
       acc[monthKey] = {
         month: month,
         monthFull: monthFull,
-        monthLabel: month,
+        monthLabel: convertToThaiMonth(month),
         yearBE: yearBE,
         yearLabel: yearBE.toString(),
         fullLabel: monthKey,
@@ -788,7 +799,7 @@ const ExpenseTooltip = ({ active, payload, label }: any) => {
           lineHeight: 1.5,
         }}
       >
-        Total Amount :{" "}
+        Net Amount :{" "}
         {Number(item.value).toLocaleString(undefined, {
           minimumFractionDigits: Number(item.value) % 1 === 0 ? 0 : 2,
           maximumFractionDigits: 2,
@@ -921,7 +932,7 @@ const SupplierTooltip = ({
 export function CostInsights({
   filters,
 }: {
-  filters: { year: string; project: string };
+  filters: { year: string; project: string; months?: string[] };
 }) {
   const [activeTab, setActiveTab] = useState<
     "category" | "supplier" | "performance"
@@ -982,6 +993,28 @@ export function CostInsights({
   // Tooltip state for supplier cards
   const [hoveredSupplier, setHoveredSupplier] = useState<any>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [activeDropdown, setActiveDropdown] = useState<"supplier" | null>(null);
+  const supplierDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Click outside handler for dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        supplierDropdownRef.current &&
+        !supplierDropdownRef.current.contains(event.target as Node)
+      ) {
+        setActiveDropdown(null);
+      }
+    };
+
+    if (activeDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [activeDropdown]);
 
   // palette used for item group bars, can be customized or extended
   const subcategoryColors = [
@@ -1007,7 +1040,7 @@ export function CostInsights({
     () =>
       monthlyTrendByCategoryData.map((d: any) => ({
         ...d,
-        monthLabel: d.month.slice(0, 3),
+        monthLabel: convertToThaiMonth(d.month.slice(0, 3)),
         yearLabel: d.yearBE,
       })),
     [monthlyTrendByCategoryData],
@@ -1070,7 +1103,11 @@ export function CostInsights({
   // Memoized supplier data processing
   const supplierBreakdownData = React.useMemo(() => {
     if (!lineData || !lineData.rows || loading) {
-      return { suppliersWithCategories: [], maxTotal: 0 };
+      return {
+        suppliersWithCategories: [],
+        maxTotal: 0,
+        totalSupplierSpend: 0,
+      };
     }
 
     // Get supplier data with category breakdown from procurement_line
@@ -1107,6 +1144,21 @@ export function CostInsights({
         );
       }
 
+      if (filters.months && filters.months.length > 0) {
+        filteredRows = filteredRows.filter((row: any) => {
+          const dateStr = row.Date || row.date || row["DATE"];
+          if (!dateStr) return false;
+
+          const timestamp = parseDateSafe(dateStr);
+          if (timestamp > 0) {
+            const month = new Date(timestamp).getMonth() + 1;
+            return filters.months?.includes(month.toString()) || false;
+          }
+
+          return false;
+        });
+      }
+
       filteredRows.forEach((row: any) => {
         const supplier = row.Supplier || row.supplierName || "Unknown";
         const category = (
@@ -1140,33 +1192,42 @@ export function CostInsights({
     }
 
     // Convert to array and sort by total
-    const suppliersWithCategories = Array.from(supplierCategoryMap.entries())
+    const sortedSuppliers = Array.from(supplierCategoryMap.entries())
       .map(([name, data]) => ({
         name,
         ...data,
       }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 10);
+      .sort((a, b) => b.total - a.total);
 
-    const maxTotal = Math.max(...suppliersWithCategories.map((s) => s.total));
+    const totalSupplierSpend = Array.from(supplierCategoryMap.values()).reduce(
+      (sum, supplier) => sum + supplier.total,
+      0,
+    );
 
-    return { suppliersWithCategories, maxTotal };
+    const suppliersWithCategories = sortedSuppliers.slice(0, 10);
+
+    const maxTotal =
+      suppliersWithCategories.length > 0
+        ? Math.max(...suppliersWithCategories.map((s) => s.total))
+        : 0;
+
+    return { suppliersWithCategories, maxTotal, totalSupplierSpend };
   }, [lineData, loading, filters]);
 
   const supplierChartData = React.useMemo(() => {
-    const { suppliersWithCategories, maxTotal } = supplierBreakdownData;
+    const { suppliersWithCategories, maxTotal, totalSupplierSpend } =
+      supplierBreakdownData;
 
     return suppliersWithCategories.map((supplier, index) => {
-      const total = suppliersWithCategories.reduce(
-        (sum, s) => sum + s.total,
-        0,
-      );
-      const percentage = total ? (supplier.total / total) * 100 : 0;
-      const barWidth = (supplier.total / maxTotal) * 100;
+      const percentage =
+        totalSupplierSpend && totalSupplierSpend > 0
+          ? (supplier.total / totalSupplierSpend) * 100
+          : 0;
+      const barWidth = maxTotal > 0 ? (supplier.total / maxTotal) * 100 : 0;
 
       return {
         ...supplier,
-        total,
+        total: totalSupplierSpend || 0,
         percentage,
         barWidth,
         formattedTotal: formatCurrency(supplier.total),
@@ -1228,7 +1289,7 @@ export function CostInsights({
       const [mon, yr] = d.month.split("-");
       return {
         ...d,
-        monthLabel: mon.slice(0, 3),
+        monthLabel: convertToThaiMonth(mon.slice(0, 3)),
         yearLabel: yr,
       };
     });
@@ -1320,6 +1381,59 @@ export function CostInsights({
           );
         }
 
+        // Apply month filter to head data
+        if (filters.months && filters.months.length > 0) {
+          headRows = headRows.filter((row: any) => {
+            const dateStr = row.Date || row.date || row["DATE"];
+            if (dateStr) {
+              const timestamp = parseDateSafe(dateStr);
+              if (timestamp > 0) {
+                const month = new Date(timestamp).getMonth() + 1;
+                return filters.months!.includes(month.toString());
+              }
+            }
+            return false;
+          });
+        }
+
+        // Apply filters to line data
+        if (filters.year !== "all") {
+          lineRows = lineRows.filter((row: any) => {
+            const dateStr = row.Date || row.date || row["DATE"];
+            if (dateStr) {
+              const timestamp = parseDateSafe(dateStr);
+              if (timestamp > 0) {
+                const year = new Date(timestamp).getFullYear();
+                return year.toString() === filters.year;
+              }
+            }
+            return false;
+          });
+        }
+
+        if (filters.project !== "all") {
+          lineRows = lineRows.filter(
+            (row: any) =>
+              (row.Project || row.projectCode || row["Project Code"]) ===
+              filters.project,
+          );
+        }
+
+        // Apply month filter to line data
+        if (filters.months && filters.months.length > 0) {
+          lineRows = lineRows.filter((row: any) => {
+            const dateStr = row.Date || row.date || row["DATE"];
+            if (dateStr) {
+              const timestamp = parseDateSafe(dateStr);
+              if (timestamp > 0) {
+                const month = new Date(timestamp).getMonth() + 1;
+                return filters.months!.includes(month.toString());
+              }
+            }
+            return false;
+          });
+        }
+
         // Process data using helper functions
         setCostDistributionData(buildCostDistribution(lineRows));
         const monthlyTrendData = buildMonthlyTrend(lineRows, filters);
@@ -1378,7 +1492,7 @@ export function CostInsights({
     };
 
     fetchData();
-  }, [filters]);
+  }, [filters.year, filters.project, filters.months]);
 
   // Function to fetch PO details for a specific category or supplier
   const fetchCategoryPOs = async (categoryName: string) => {
@@ -1444,6 +1558,21 @@ export function CostInsights({
             (row.Project || row.projectCode || row["Project Code"]) ===
             filters.project,
         );
+      }
+
+      // Apply month filter
+      if (filters.months && filters.months.length > 0) {
+        categoryRows = categoryRows.filter((row: any) => {
+          const dateStr = row.Date || row.date || row["DATE"];
+          if (dateStr) {
+            const timestamp = parseDateSafe(dateStr);
+            if (timestamp > 0) {
+              const month = new Date(timestamp).getMonth() + 1;
+              return filters.months!.includes(month.toString());
+            }
+          }
+          return false;
+        });
       }
 
       // Group by PO Number
@@ -1552,10 +1681,42 @@ export function CostInsights({
       const headRows = headDataResponse.rows || [];
 
       // Filter POs by project code from line data
-      const projectPOs = lineRows.filter((row: any) => {
+      let projectPOs = lineRows.filter((row: any) => {
         const project = row.Project || row.project || row.projectCode || "";
         return project === projectCode;
       });
+
+      // Apply YEAR filter
+      if (filters.year !== "all") {
+        projectPOs = projectPOs.filter((row: any) => {
+          const dateStr = row.Date || row.date || row["DATE"];
+          if (!dateStr) return false;
+
+          const timestamp = parseDateSafe(dateStr);
+          if (timestamp > 0) {
+            const year = new Date(timestamp).getFullYear();
+            return year.toString() === filters.year;
+          }
+
+          return false;
+        });
+      }
+
+      // Apply MONTH filter
+      if (filters.months && filters.months.length > 0) {
+        projectPOs = projectPOs.filter((row: any) => {
+          const dateStr = row.Date || row.date || row["DATE"];
+          if (!dateStr) return false;
+
+          const timestamp = parseDateSafe(dateStr);
+          if (timestamp > 0) {
+            const month = new Date(timestamp).getMonth() + 1;
+            return filters.months!.includes(month.toString());
+          }
+
+          return false;
+        });
+      }
 
       // Group by PO number and create PO details
       const poMap = new Map();
@@ -1585,17 +1746,13 @@ export function CostInsights({
         });
       });
 
-      // Get total amounts from procurement_head for each PO
+      // Calculate total amount from line items (procurement_line)
       poMap.forEach((poData, poNumber) => {
-        const headRow = headRows.find(
-          (row: any) => String(row["PO Number"] || row.poNumber) === poNumber,
+        const totalFromLineItems = poData.lineItems.reduce(
+          (sum: number, item: any) => sum + item.amount,
+          0,
         );
-        if (headRow) {
-          poData.totalAmount =
-            parseAmount(
-              String(headRow["Total Amount"] || headRow.totalPrice || 0),
-            ) || 0;
-        }
+        poData.totalAmount = totalFromLineItems;
       });
 
       const poDetails = Array.from(poMap.values());
@@ -1893,7 +2050,7 @@ export function CostInsights({
                           {/* Center Text for Donut */}
                           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[35%] text-center pointer-events-none">
                             <span className="block text-sm font-medium text-gray-600 mb-0.5">
-                              Total Amount
+                              Net Amount
                             </span>
                             <span className="block text-2xl font-bold text-gray-900 tracking-tight leading-none">
                               {formattedTotalCostDistribution}
@@ -1901,9 +2058,6 @@ export function CostInsights({
                             <span className="block text-xs font-medium text-gray-500 mt-1">
                               THB
                             </span>
-                            <p className="text-xs text-gray-400 mt-2">
-                              Excl. VAT
-                            </p>
                           </div>
                         </div>
 
@@ -2147,35 +2301,13 @@ export function CostInsights({
                           height={10} // smaller height to tighten gap
                           tick={{ dy: -2 }} // lift years closer to months
                           interval={0}
-                          tickFormatter={(value, index) => {
-                            // Only show year label for the middle month of each year
-                            const data = spendingTrendChartData;
-                            if (!data || data.length === 0) return "";
-
-                            // Group months by year
-                            const yearGroups: { [key: string]: number[] } = {};
-                            data.forEach((item, idx) => {
-                              const year = item.yearBE;
-                              if (!yearGroups[year]) {
-                                yearGroups[year] = [];
-                              }
-                              yearGroups[year].push(idx);
-                            });
-
-                            // Check if this index should show year label (for each year group pick center)
-                            for (const year in yearGroups) {
-                              const indices = yearGroups[year];
-                              // For 12 months, position between month 6 and 7 (index 6)
-                              const targetIndex =
-                                indices[6] ||
-                                indices[Math.floor(indices.length / 2)];
-                              if (index === targetIndex) {
-                                return value;
-                              }
-                            }
-
-                            return "";
-                          }}
+                          tickFormatter={(value, index) =>
+                            shouldShowYearLabel(
+                              spendingTrendChartData,
+                              index,
+                              "yearLabel",
+                            )
+                          }
                         />
 
                         <YAxis
@@ -2224,7 +2356,10 @@ export function CostInsights({
                           labelFormatter={(label, payload) => {
                             if (payload && payload[0]) {
                               const data = payload[0].payload;
-                              return `${data.month} ${data.yearBE}`;
+                              const thaiMonthFull = convertToThaiMonthFull(
+                                data.month,
+                              );
+                              return `${thaiMonthFull} ${data.yearBE}`;
                             }
                             return label;
                           }}
@@ -2285,7 +2420,7 @@ export function CostInsights({
                   title="Top Suppliers by Spending"
                   subtitle="Supplier spending with cost category breakdown"
                   delay={0.1}
-                  className="px-8 pt-6 pb-6"
+                  className="px-8 pt-6 pb-8"
                   headerAction={
                     <div className="flex items-center gap-4">
                       <ul
@@ -2496,9 +2631,6 @@ export function CostInsights({
                       ));
                     })()}
                   </div>
-                  <p className="text-xs text-gray-500 mt-4">
-                    *All amounts are exclusive of VAT.
-                  </p>
                 </ChartContainer>
 
                 <ChartContainer
@@ -2507,28 +2639,65 @@ export function CostInsights({
                   delay={0.3}
                   className="px-8 pt-6 pb-6"
                   headerAction={
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={selectedSupplier}
-                        onChange={(e) => setSelectedSupplier(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white"
-                      >
-                        <option value="all">All Suppliers</option>
-                        {supplierTrendData
-                          .filter(
-                            (supplier) => supplier.supplier !== "All Suppliers",
+                    <div className="relative" ref={supplierDropdownRef}>
+                      <button
+                        onClick={() =>
+                          setActiveDropdown(
+                            activeDropdown === "supplier" ? null : "supplier",
                           )
-                          .map((supplier) => (
-                            <option
-                              key={supplier.supplier}
-                              value={supplier.supplier}
+                        }
+                        className="h-[38px] w-[260px] px-3 py-2 text-sm font-normal border border-gray-300 rounded-lg bg-white text-gray-900 flex items-center justify-between hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <span
+                          className="truncate max-w-[210px]"
+                          title={selectedSupplier}
+                        >
+                          {selectedSupplier === "all"
+                            ? "All Suppliers"
+                            : selectedSupplier}
+                        </span>
+
+                        <ChevronDown
+                          size={16}
+                          className={`text-gray-500 transition-transform ${
+                            activeDropdown === "supplier" ? "rotate-180" : ""
+                          }`}
+                        />
+                      </button>
+
+                      {activeDropdown === "supplier" && (
+                        <div className="absolute top-full left-0 mt-1 w-[260px] bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                          <div className="p-1 max-h-64 overflow-y-auto">
+                            <div
+                              onClick={() => {
+                                setSelectedSupplier("all");
+                                setActiveDropdown(null);
+                              }}
+                              className="px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer rounded"
                             >
-                              {supplier.supplier.length > 30
-                                ? supplier.supplier.substring(0, 30) + "..."
-                                : supplier.supplier}
-                            </option>
-                          ))}
-                      </select>
+                              All Suppliers
+                            </div>
+
+                            {supplierTrendData
+                              .filter((s) => s.supplier !== "All Suppliers")
+                              .map((supplier) => (
+                                <div
+                                  key={supplier.supplier}
+                                  onClick={() => {
+                                    setSelectedSupplier(supplier.supplier);
+                                    setActiveDropdown(null);
+                                  }}
+                                  className="px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer rounded"
+                                  title={supplier.supplier}
+                                >
+                                  <span className="block truncate max-w-[230px]">
+                                    {supplier.supplier}
+                                  </span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   }
                 >
@@ -2580,41 +2749,13 @@ export function CostInsights({
                             height={10}
                             tick={{ dy: -2 }}
                             interval={0}
-                            tickFormatter={(value, index) => {
-                              // Only show year label for the middle month of each year
-                              if (
-                                !supplierTrendChartData ||
-                                supplierTrendChartData.length === 0
+                            tickFormatter={(value, index) =>
+                              shouldShowYearLabel(
+                                supplierTrendChartData,
+                                index,
+                                "yearLabel",
                               )
-                                return "";
-
-                              // Group months by year
-                              const yearGroups: { [key: string]: number[] } =
-                                {};
-                              supplierTrendChartData.forEach(
-                                (item: any, idx: number) => {
-                                  const year = item.yearLabel;
-                                  if (!yearGroups[year]) {
-                                    yearGroups[year] = [];
-                                  }
-                                  yearGroups[year].push(idx);
-                                },
-                              );
-
-                              // Check if this index should show year label (between months 6 and 7)
-                              for (const year in yearGroups) {
-                                const indices = yearGroups[year];
-                                // For 12 months, position between month 6 and 7 (index 6)
-                                const targetIndex =
-                                  indices[6] ||
-                                  indices[Math.floor(indices.length / 2)];
-                                if (index === targetIndex) {
-                                  return value;
-                                }
-                              }
-
-                              return "";
-                            }}
+                            }
                           />
                           <YAxis
                             axisLine={false}
@@ -2651,27 +2792,13 @@ export function CostInsights({
                                 minimumFractionDigits: value % 1 === 0 ? 0 : 2,
                                 maximumFractionDigits: 2,
                               })}`,
-                              "Total Amount",
+                              "Net Amount",
                             ]}
                             labelFormatter={(label, payload) => {
-                              // Convert abbreviated month to full month name
-                              const monthMap: { [key: string]: string } = {
-                                Jan: "January",
-                                Feb: "February",
-                                Mar: "March",
-                                Apr: "April",
-                                May: "May",
-                                Jun: "June",
-                                Jul: "July",
-                                Aug: "August",
-                                Sep: "September",
-                                Oct: "October",
-                                Nov: "November",
-                                Dec: "December",
-                              };
-                              const fullMonth = monthMap[label] || label;
+                              const thaiMonthFull =
+                                convertToThaiMonthFull(label);
                               const year = payload[0]?.payload?.yearLabel || "";
-                              return `${fullMonth} ${year}`;
+                              return `${thaiMonthFull} ${year}`;
                             }}
                           />
                           <Line
@@ -3063,36 +3190,13 @@ export function CostInsights({
                             height={10}
                             tick={{ dy: -2 }}
                             interval={0}
-                            tickFormatter={(value, index) => {
-                              // Only show year label for the middle month of each year
-                              if (!poVolumeData || poVolumeData.length === 0)
-                                return "";
-
-                              // Group months by year
-                              const yearGroups: { [key: string]: number[] } =
-                                {};
-                              poVolumeData.forEach((item: any, idx: number) => {
-                                const year = item.yearLabel;
-                                if (!yearGroups[year]) {
-                                  yearGroups[year] = [];
-                                }
-                                yearGroups[year].push(idx);
-                              });
-
-                              // Check if this index should show year label (between months 6 and 7)
-                              for (const year in yearGroups) {
-                                const indices = yearGroups[year];
-                                // For 12 months, position between month 6 and 7 (index 6)
-                                const targetIndex =
-                                  indices[6] ||
-                                  indices[Math.floor(indices.length / 2)];
-                                if (index === targetIndex) {
-                                  return value;
-                                }
-                              }
-
-                              return "";
-                            }}
+                            tickFormatter={(value, index) =>
+                              shouldShowYearLabel(
+                                poVolumeData,
+                                index,
+                                "yearLabel",
+                              )
+                            }
                           />
                           <YAxis
                             axisLine={false}
@@ -3133,7 +3237,10 @@ export function CostInsights({
                             labelFormatter={(label, payload) => {
                               if (payload && payload[0]) {
                                 const data = payload[0].payload;
-                                return `${data.monthFull} ${data.yearBE}`;
+                                const thaiMonthFull = convertToThaiMonthFull(
+                                  data.month,
+                                );
+                                return `${thaiMonthFull} ${data.yearBE}`;
                               }
                               return label;
                             }}
@@ -3379,7 +3486,7 @@ export function CostInsights({
                         </div>
                         <div className="text-right">
                           <p className="text-xs text-gray-500 mb-1">
-                            Total Amount (Incl. VAT)
+                            Net Amount
                           </p>
                           <p className="text-lg font-bold text-gray-900">
                             {formatCurrency(po.totalAmount)}

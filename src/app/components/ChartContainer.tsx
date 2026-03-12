@@ -34,7 +34,7 @@ export function ChartContainer({
         </div>
         {headerAction && <div>{headerAction}</div>}
       </div>
-      <div className="flex-1 w-full">{children}</div>
+      <div className="w-full">{children}</div>
     </motion.div>
   );
 }

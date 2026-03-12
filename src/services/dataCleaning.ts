@@ -106,20 +106,119 @@ export const DataCleaningService = {
       supplier: "",
     };
 
-    // First pass: process all rows normally
-    const processedData = rawData
+    // Step 1: Detect cancelled PO numbers
+    const cancelledPOs = new Set<string>();
+    let currentPO = "";
+
+    for (const row of rawData) {
+      const poValue = this.findValue(row, [
+        "PO",
+        "PO_Number",
+        "เลขที่ PO",
+        "PO.NO.",
+        "PO NO",
+        "__EMPTY_1",
+      ]);
+
+      // Track current PO number when we encounter a header row
+      if (poValue && poValue.toString().trim() !== "") {
+        const poStr = poValue.toString().trim();
+
+        const isCancelRow =
+          poStr.includes("ยกเลิก") || poStr.toLowerCase().includes("cancel");
+
+        if (!isCancelRow) {
+          currentPO = poStr;
+        }
+      }
+
+      // Check for cancellation keywords in any column
+      const allValues = Object.values(row).join(" ").toLowerCase();
+      const cancellationKeywords = [
+        "[poยกเลิก]",
+        "poยกเลิก",
+        "ยกเลิก",
+        "cancel",
+        "cancelled",
+        "void",
+      ];
+
+      const hasCancellation = cancellationKeywords.some((keyword) =>
+        allValues.includes(keyword.toLowerCase()),
+      );
+
+      if (hasCancellation && currentPO) {
+        cancelledPOs.add(currentPO);
+        console.log(
+          `🚫 [DataCleaningService] Cancelled PO detected: ${currentPO}`,
+        );
+      }
+    }
+
+    if (cancelledPOs.size > 0) {
+      console.log("🚫 Cancelled PO detected:", [...cancelledPOs]);
+    }
+
+    // Step 2: Remove cancelled PO groups using sequential tracking
+    let filteredRows = rawData;
+    if (cancelledPOs.size > 0) {
+      let currentPO = "";
+      let isCurrentPOCancelled = false;
+
+      filteredRows = rawData.filter((row) => {
+        const poValue = this.findValue(row, [
+          "PO",
+          "PO_Number",
+          "เลขที่ PO",
+          "PO.NO.",
+          "PO NO",
+          "__EMPTY_1",
+        ]);
+
+        // If this row has a PO number, update tracking
+        if (poValue && poValue.toString().trim() !== "") {
+          const poStr = poValue.toString().trim();
+
+          const isCancelRow =
+            poStr.includes("ยกเลิก") || poStr.toLowerCase().includes("cancel");
+
+          if (!isCancelRow) {
+            currentPO = poStr;
+            isCurrentPOCancelled = cancelledPOs.has(poStr);
+          }
+        }
+
+        // Skip row if current PO is cancelled
+        if (isCurrentPOCancelled) {
+          return false;
+        }
+
+        return true;
+      });
+
+      console.log(
+        `🧹 Rows after removing cancelled PO: ${filteredRows.length}`,
+      );
+    }
+
+    // Continue with existing pipeline
+    const processedData = filteredRows
       .filter((row) => this.isValidRow(row))
       .map((row) => this.processRow(row));
 
+    const finalData = processedData.filter(
+      (row) => !cancelledPOs.has((row.poNumber || "").trim()),
+    );
+
     // Second pass: update headers with project codes from subsequent line items
-    for (let i = 0; i < processedData.length; i++) {
-      const currentRow = processedData[i];
+    for (let i = 0; i < finalData.length; i++) {
+      const currentRow = finalData[i];
 
       // If this is a header without project code, look for next line item with project code
       if (currentRow.itemCode === "" && currentRow.projectCode === "N/A") {
         // Look for next line item with project code
-        for (let j = i + 1; j < processedData.length; j++) {
-          const nextRow = processedData[j];
+        for (let j = i + 1; j < finalData.length; j++) {
+          const nextRow = finalData[j];
           if (nextRow.itemCode !== "" && nextRow.projectCode !== "N/A") {
             // Found a line item with project code, update the header
             currentRow.projectCode = nextRow.projectCode;
@@ -129,13 +228,49 @@ export const DataCleaningService = {
       }
     }
 
+    // Filter out older PO revisions, keeping only the highest revision for each base PO
+    const latestPOMap = new Map<string, { rev: number; po: string }>();
+    for (const row of finalData) {
+      const po = (row.poNumber || "").trim();
+      if (!po) continue;
+
+      const base = this.extractBasePO(po);
+      const rev = this.extractRevision(po);
+
+      if (!latestPOMap.has(base) || latestPOMap.get(base)!.rev < rev) {
+        latestPOMap.set(base, { rev, po });
+      }
+    }
+
+    const validPOs = new Set([...latestPOMap.values()].map((v) => v.po));
+    const revisionFilteredRows = finalData.filter((row) =>
+      validPOs.has((row.poNumber || "").trim()),
+    );
+
     console.log("✅ [DataCleaningService] Data cleaning completed");
     console.log("📊 [DataCleaningService] Output data:", {
-      totalRows: processedData.length,
-      sampleRow: processedData[0],
+      totalRows: revisionFilteredRows.length,
+      sampleRow: revisionFilteredRows[0],
     });
 
-    return processedData;
+    // Validation: Ensure cancelled POs are completely removed
+    if (cancelledPOs.size > 0) {
+      const remainingCancelledRows = revisionFilteredRows.filter((r) =>
+        cancelledPOs.has(r.poNumber),
+      );
+      console.log("Remaining rows for cancelled PO:", remainingCancelledRows);
+
+      for (const cancelledPO of cancelledPOs) {
+        const remaining = revisionFilteredRows.filter(
+          (r) => r.poNumber === cancelledPO,
+        );
+        if (remaining.length > 0) {
+          console.error("CANCELLED PO STILL EXISTS:", cancelledPO, remaining);
+        }
+      }
+    }
+
+    return revisionFilteredRows;
   },
 
   /**
@@ -153,18 +288,48 @@ export const DataCleaningService = {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: "array" });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet) as RawDataRow[];
 
-          console.log("✅ [DataCleaningService] Excel parsing completed:", {
-            sheets: workbook.SheetNames,
-            selectedSheet: firstSheetName,
-            rowsParsed: jsonData.length,
-            sampleRow: jsonData[0],
+          const allSheetsData: RawDataRow[] = [];
+          const sheetNames = workbook.SheetNames;
+
+          console.log(
+            "📋 [DataCleaningService] Processing sheets:",
+            sheetNames,
+          );
+
+          // Iterate through all sheets
+          sheetNames.forEach((sheetName) => {
+            const worksheet = workbook.Sheets[sheetName];
+            const sheetData = XLSX.utils.sheet_to_json(
+              worksheet,
+            ) as RawDataRow[];
+
+            // Add Source_Sheet property to each row
+            const sheetDataWithSource = sheetData.map((row) => ({
+              ...row,
+              Source_Sheet: sheetName,
+            }));
+
+            allSheetsData.push(...sheetDataWithSource);
+            console.log(
+              `📄 [DataCleaningService] Processed sheet "${sheetName}": ${sheetData.length} rows`,
+            );
           });
 
-          resolve(jsonData);
+          console.log("✅ [DataCleaningService] Excel parsing completed:", {
+            sheets: sheetNames,
+            totalRowsParsed: allSheetsData.length,
+            sampleRow: allSheetsData[0],
+          });
+
+          console.log(
+            `📊 [DataCleaningService] Sheets processed: [${sheetNames.map((s) => `"${s}"`).join(", ")}]`,
+          );
+          console.log(
+            `📊 [DataCleaningService] Total rows parsed: ${allSheetsData.length}`,
+          );
+
+          resolve(allSheetsData);
         } catch (err) {
           console.error("❌ [DataCleaningService] Excel parsing error:", err);
           reject(err);
@@ -188,6 +353,12 @@ export const DataCleaningService = {
     console.log(
       "📊 [DataCleaningService] Processing data into Head/Line tables...",
     );
+
+    // Defensive safety filter: Remove any remaining cancelled PO rows
+    cleanedData = cleanedData.filter((row) => {
+      const po = (row.poNumber || "").toLowerCase();
+      return po && !po.includes("ยกเลิก") && !po.includes("cancel");
+    });
 
     // Generate batch ID for this upload
     const batchId = this.generateBatchId();
@@ -724,5 +895,20 @@ export const DataCleaningService = {
     } else {
       return "Material";
     }
+  },
+
+  /**
+   * Extract revision number from PO number (REV<number>)
+   */
+  extractRevision(po: string): number {
+    const match = po.match(/REV(\d+)$/i);
+    return match ? parseInt(match[1]) : 0;
+  },
+
+  /**
+   * Extract base PO number by removing REV suffix
+   */
+  extractBasePO(po: string): string {
+    return po.replace(/REV\d+$/i, "");
   },
 };

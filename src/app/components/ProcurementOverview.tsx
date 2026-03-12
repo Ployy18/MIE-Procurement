@@ -13,6 +13,9 @@ import {
   Cell,
 } from "recharts";
 
+// Chart Utils
+import { shouldShowYearLabel } from "../../utils/chartAxisUtils";
+
 // Lucide Icons
 import {
   ChevronFirst,
@@ -36,6 +39,10 @@ import { IoMdDocument } from "react-icons/io";
 import { KPICard } from "./KPICard";
 import { ChartContainer } from "./ChartContainer";
 import { LoadingState } from "./ui/LoadingState";
+import {
+  convertToThaiMonth,
+  convertToThaiMonthFull,
+} from "../utils/thaiMonthUtils";
 
 // Services
 import { getSheetDataByName } from "../../services/googleSheetsService";
@@ -43,9 +50,30 @@ import { getSheetDataByName } from "../../services/googleSheetsService";
 export function ProcurementOverview({
   filters,
 }: {
-  filters: { year: string; project: string };
+  filters: { year: string; project: string; months?: string[] };
 }) {
   // Utility functions
+  const extractMonthFromDate = (
+    dateStr: string | undefined | null,
+  ): number | null => {
+    if (!dateStr) return null;
+
+    let month: number;
+    if (dateStr.includes("/")) {
+      // Format: DD/MM/YYYY or DD/MM/YY
+      const parts = dateStr.split("/");
+      month = parseInt(parts[1]);
+    } else if (dateStr.includes("-")) {
+      // Format: YYYY-MM-DD
+      const parts = dateStr.split("-");
+      month = parseInt(parts[1]);
+    } else {
+      return null;
+    }
+
+    return isNaN(month) ? null : month;
+  };
+
   const extractYearFromDate = (
     dateStr: string | undefined | null,
   ): number | null => {
@@ -118,36 +146,77 @@ export function ProcurementOverview({
       const headRows = headDataResponse.rows || [];
       const lineRows = lineDataResponse.rows || [];
 
-      // 1. Project Filter (for Yearly Overview)
-      let projectFilteredHead = headRows;
-      if (filters.project !== "all") {
-        projectFilteredHead = projectFilteredHead.filter(
-          (row: any) => row.Project === filters.project,
-        );
-      }
+      // Central filtering function for head data
+      const filterHeadData = (rows: any[]) => {
+        return rows.filter((row) => {
+          // Year filter
+          if (filters.year !== "all") {
+            const year = extractYearFromDate(row.Date);
+            if (year === null || year.toString() !== filters.year) {
+              return false;
+            }
+          }
 
-      // 2. Further filter by Year (for everything else)
-      let filteredHead = projectFilteredHead;
-      if (filters.year !== "all") {
-        filteredHead = filteredHead.filter((row: any) => {
-          const year = extractYearFromDate(row.Date);
-          return year !== null && year.toString() === filters.year;
-        });
-      }
+          // Project filter
+          if (filters.project !== "all") {
+            if (row.Project !== filters.project) {
+              return false;
+            }
+          }
 
-      // Apply filters to lineRows (for Category Costs and Charts)
-      let filteredLine = lineRows;
-      if (filters.year !== "all") {
-        filteredLine = filteredLine.filter((row: any) => {
-          const year = extractYearFromDate(row.Date);
-          return year !== null && year.toString() === filters.year;
+          // Month filter
+          if (filters.months && filters.months.length > 0) {
+            const month = extractMonthFromDate(row.Date);
+            if (month === null || !filters.months.includes(month.toString())) {
+              return false;
+            }
+          }
+
+          return true;
         });
-      }
-      if (filters.project !== "all") {
-        filteredLine = filteredLine.filter(
-          (row: any) => row.Project === filters.project,
-        );
-      }
+      };
+
+      // Central filtering function for line data
+      const filterLineData = (rows: any[]) => {
+        return rows.filter((row) => {
+          // Year filter
+          if (filters.year !== "all") {
+            const year = extractYearFromDate(row.Date);
+            if (year === null || year.toString() !== filters.year) {
+              return false;
+            }
+          }
+
+          // Project filter
+          if (filters.project !== "all") {
+            if (row.Project !== filters.project) {
+              return false;
+            }
+          }
+
+          // Month filter
+          if (filters.months && filters.months.length > 0) {
+            const month = extractMonthFromDate(row.Date);
+            if (month === null || !filters.months.includes(month.toString())) {
+              return false;
+            }
+          }
+
+          return true;
+        });
+      };
+
+      // Apply filters to get filtered data
+      const filteredHead = filterHeadData(headRows);
+      const filteredLine = filterLineData(lineRows);
+
+      // For yearly overview, we need data without month filter
+      const projectFilteredHead = headRows.filter((row) => {
+        if (filters.project !== "all") {
+          return row.Project === filters.project;
+        }
+        return true;
+      });
 
       // 3. Single reduce pass for all category costs and category spend
       const categoryStats = filteredLine.reduce(
@@ -192,8 +261,8 @@ export function ProcurementOverview({
       );
       setUniquePOCount(uniquePOs.size);
 
-      const total = filteredHead.reduce(
-        (sum: number, row: any) => sum + (parseFloat(row["Total Amount"]) || 0),
+      const total = Object.values(categoryStats.categorySpend).reduce(
+        (sum: number, amount: number) => sum + amount,
         0,
       );
       setTotalAmount(total);
@@ -202,8 +271,8 @@ export function ProcurementOverview({
       setTotalMaterialCosts(categoryStats.materialTotal);
       setTotalOtherCosts(categoryStats.otherTotal);
 
-      // 5. Process monthly expense data from procurement_head
-      const monthlyExpenseMap = filteredHead.reduce(
+      // 5. Process monthly expense data from procurement_line
+      const monthlyExpenseMap = filteredLine.reduce(
         (acc: Record<string, number>, row: any) => {
           const monthYear = extractMonthYearFromDate(row.Date);
           if (monthYear) {
@@ -250,32 +319,26 @@ export function ProcurementOverview({
           const mIdx = parseInt(month) - 1;
           return {
             name: months[mIdx],
-            monthLabel: months[mIdx].slice(0, 3),
+            monthLabel: convertToThaiMonth(months[mIdx].slice(0, 3)),
             fullName: fullMonths[mIdx],
+            thaiFullName: convertToThaiMonthFull(months[mIdx].slice(0, 3)),
             year: year,
             value: monthlyExpenseMap[monthYear],
             showYear: false,
-            yearLabel: "", // Will be set below
           };
         });
 
-      // Mark year labels (Centered under year's months)
-      const yearGroups: Record<string, number[]> = {};
-      sortedMonthlyData.forEach((item, index) => {
-        if (!yearGroups[item.year]) yearGroups[item.year] = [];
-        yearGroups[item.year].push(index);
-      });
-
-      // Set yearLabel for the middle index of each year group
-      Object.entries(yearGroups).forEach(([year, indices]) => {
-        const midIdx = indices[Math.floor(indices.length / 2)];
-        sortedMonthlyData[midIdx].yearLabel = year;
-      });
-
       setMonthlyExpenseData(sortedMonthlyData);
 
-      // 5. Process yearly expense data from projectFilteredHead
-      const yearlyExpenseMap = projectFilteredHead.reduce(
+      // 5. Process yearly expense data from procurement_line
+      const projectFilteredLine = lineRows.filter((row) => {
+        if (filters.project !== "all") {
+          return row.Project === filters.project;
+        }
+        return true;
+      });
+
+      const yearlyExpenseMap = projectFilteredLine.reduce(
         (acc: Record<string, number>, row: any) => {
           const year = extractYearFromDate(row.Date);
 
@@ -299,7 +362,7 @@ export function ProcurementOverview({
       setYearlyExpenseData(sortedYearlyData);
 
       // 6. Supplier Data
-      const supplierMap = filteredHead.reduce((acc: any, row: any) => {
+      const supplierMap = filteredLine.reduce((acc: any, row: any) => {
         const supplier = row.Supplier;
         const amount = parseFloat(row["Total Amount"]) || 0;
         const poNumber = row["PO Number"];
@@ -332,14 +395,22 @@ export function ProcurementOverview({
       setSupplierData(sortedSuppliers);
 
       // 7. Category Data
-      const sortedCategories = Object.entries(categoryStats.categorySpend)
-        .map(([category, amount]) => ({
-          category,
-          total: amount as number,
-        }))
-        .sort((a, b) => (b.total as number) - (a.total as number));
+      const orderedCategories = [
+        {
+          category: "Service",
+          total: categoryStats.serviceTotal || 0,
+        },
+        {
+          category: "Material",
+          total: categoryStats.materialTotal || 0,
+        },
+        {
+          category: "Other",
+          total: categoryStats.otherTotal || 0,
+        },
+      ];
 
-      setCategoryData(sortedCategories);
+      setCategoryData(orderedCategories);
       setCurrentPage(1);
     } catch (error) {
       console.error("Error processing procurement data:", error);
@@ -369,7 +440,7 @@ export function ProcurementOverview({
 
   useEffect(() => {
     fetchPOData();
-  }, [filters.year, filters.project, location.pathname]);
+  }, [filters.year, filters.project, filters.months, location.pathname]);
 
   // Listen for data updates from DataSource
   useEffect(() => {
@@ -401,24 +472,11 @@ export function ProcurementOverview({
         (row: any) => row.Supplier === supplierName,
       );
 
-      // Apply year/project filters if active for head data
+      // Apply year/project/month filters if active for head data
       if (filters.year !== "all") {
         supplierHeadRows = supplierHeadRows.filter((row: any) => {
-          const dateStr = row.Date;
-          if (dateStr) {
-            let year;
-            if (dateStr.includes("/")) {
-              const parts = dateStr.split("/");
-              year = parseInt(parts[2]);
-            } else if (dateStr.includes("-")) {
-              const parts = dateStr.split("-");
-              year = parseInt(parts[0]);
-            } else {
-              return false;
-            }
-            return year.toString() === filters.year;
-          }
-          return false;
+          const year = extractYearFromDate(row.Date);
+          return year !== null && year.toString() === filters.year;
         });
       }
       if (filters.project !== "all") {
@@ -426,36 +484,35 @@ export function ProcurementOverview({
           (row: any) => row.Project === filters.project,
         );
       }
+      if (filters.months && filters.months.length > 0) {
+        supplierHeadRows = supplierHeadRows.filter((row: any) => {
+          const month = extractMonthFromDate(row.Date);
+          return month !== null && filters.months!.includes(month.toString());
+        });
+      }
 
       // Filter line data similarly for line items
       let supplierLineRows = lineRows.filter(
         (row: any) => row.Supplier === supplierName,
       );
 
-      // Apply year/project filters if active for line data
+      // Apply year/project/month filters if active for line data
       if (filters.year !== "all") {
         supplierLineRows = supplierLineRows.filter((row: any) => {
-          const dateStr = row.Date;
-          if (dateStr) {
-            let year;
-            if (dateStr.includes("/")) {
-              const parts = dateStr.split("/");
-              year = parseInt(parts[2]);
-            } else if (dateStr.includes("-")) {
-              const parts = dateStr.split("-");
-              year = parseInt(parts[0]);
-            } else {
-              return false;
-            }
-            return year.toString() === filters.year;
-          }
-          return false;
+          const year = extractYearFromDate(row.Date);
+          return year !== null && year.toString() === filters.year;
         });
       }
       if (filters.project !== "all") {
         supplierLineRows = supplierLineRows.filter(
           (row: any) => row.Project === filters.project,
         );
+      }
+      if (filters.months && filters.months.length > 0) {
+        supplierLineRows = supplierLineRows.filter((row: any) => {
+          const month = extractMonthFromDate(row.Date);
+          return month !== null && filters.months!.includes(month.toString());
+        });
       }
 
       // Group line items by PO Number
@@ -484,7 +541,7 @@ export function ProcurementOverview({
             poNumber: poNo,
             date: row.Date,
             projectCode: row.Project,
-            totalAmount: parseFloat(row["Total Amount"]) || 0, // Use Total Amount from procurement_head
+            totalAmount: parseFloat(row["Net Amount"]) || 0, // Use Net Amount from procurement_head
             lineItems: lineItemGroups[poNo] || [], // Get line items from grouped line data
           };
           return acc;
@@ -536,7 +593,7 @@ export function ProcurementOverview({
               delay={0.1}
             />
             <KPICard
-              title="Total Amount"
+              title="Net Amount"
               value={
                 loading
                   ? "Loading..."
@@ -680,29 +737,15 @@ export function ProcurementOverview({
                       height={10}
                       tick={{ dy: -2 }}
                       interval={0}
-                      tickFormatter={(value, index) => {
-                        if (
-                          !monthlyExpenseData ||
-                          monthlyExpenseData.length === 0
+                      tickFormatter={(value, index) =>
+                        shouldShowYearLabel(
+                          chartView === "month"
+                            ? monthlyExpenseData
+                            : yearlyExpenseData,
+                          index,
+                          "year",
                         )
-                          return "";
-                        const yearGroups: { [key: string]: number[] } = {};
-                        monthlyExpenseData.forEach((item: any, idx: number) => {
-                          const year = item.year;
-                          if (!yearGroups[year]) yearGroups[year] = [];
-                          yearGroups[year].push(idx);
-                        });
-                        for (const year in yearGroups) {
-                          const indices = yearGroups[year];
-                          const targetIndex =
-                            indices[6] ||
-                            indices[Math.floor(indices.length / 2)];
-                          if (index === targetIndex) {
-                            return value;
-                          }
-                        }
-                        return "";
-                      }}
+                      }
                     />
                   )}
                   <YAxis
@@ -748,12 +791,12 @@ export function ProcurementOverview({
                         minimumFractionDigits: value % 1 === 0 ? 0 : 2,
                         maximumFractionDigits: 2,
                       })}`,
-                      "Total Amount",
+                      "Net Amount",
                     ]}
                     labelFormatter={(label: string, payload: any) => {
                       if (chartView === "month" && payload && payload[0]) {
                         const data = payload[0].payload;
-                        return `${data.fullName} ${data.year}`;
+                        return `${data.thaiFullName} ${data.year}`;
                       }
                       return label;
                     }}
@@ -837,7 +880,7 @@ export function ProcurementOverview({
                         minimumFractionDigits: value % 1 === 0 ? 0 : 2,
                         maximumFractionDigits: 2,
                       })}`,
-                      "Total Amount",
+                      "Net Amount",
                     ]}
                   />
                   <Bar dataKey="total" radius={[10, 10, 0, 0]}>
@@ -874,7 +917,7 @@ export function ProcurementOverview({
                       Supplier
                     </th>
                     <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-[180px] whitespace-nowrap text-center">
-                      Total Amount
+                      Net Amount
                     </th>
                     <th className="px-4 py-2 font-medium text-gray-900 w-28 text-center">
                       PO count
@@ -1104,7 +1147,7 @@ export function ProcurementOverview({
                             </div>
                             <div className="text-right">
                               <p className="text-xs text-gray-500 mb-1">
-                                Total Amount (Incl. VAT)
+                                Net Amount
                               </p>
                               <p className="text-lg font-bold text-gray-900">
                                 {po.totalAmount.toLocaleString("en-US", {

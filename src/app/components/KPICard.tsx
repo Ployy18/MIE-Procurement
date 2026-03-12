@@ -42,11 +42,6 @@ export function KPICard({
           <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
             {value}
           </h3>
-          {title === "Total Amount" && (
-            <p className="text-gray-500 text-xs mt-1">
-              Incl. VAT
-            </p>
-          )}
         </div>
         <div className="p-3 rounded-lg bg-blue-50 text-blue-600 group-hover:text-blue-700 group-hover:bg-blue-100 transition-all">
           <Icon size={iconSize} />
