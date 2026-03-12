@@ -1,11 +1,23 @@
 import * as Papa from "papaparse";
+import authService from "./authService";
+import { API_BASE } from "../config/apiConfig";
 
 // Configuration for Node.js Backend
+// Use relative paths for better compatibility with Netlify redirects
 const BACKEND_CONFIG = {
-  BASE_URL: import.meta.env.VITE_BACKEND_URL || "http://localhost:3001",
+  BASE_URL: API_BASE, 
   TIMEOUT: 30000,
   RETRY_ATTEMPTS: 3,
 } as const;
+
+// Helper to get auth headers
+const getAuthHeaders = () => {
+  const token = authService.getToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+  } as HeadersInit;
+};
 
 // Response interface for backend API
 interface BackendResponse {
@@ -51,11 +63,9 @@ export async function uploadMultiTableData(
   tables?: any,
 ): Promise<UploadResult> {
   try {
-    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/upload`, {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/upload`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         data: cleanedData,
         filename: filename,
@@ -115,9 +125,10 @@ export async function getSheetDataByName(
 
   try {
     const response = await fetch(
-      `${BACKEND_CONFIG.BASE_URL}/api/sheets/${sheetName}`,
+      `${BACKEND_CONFIG.BASE_URL}/sheets/${sheetName}`,
       {
         method: "GET",
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
       },
     );
@@ -195,8 +206,9 @@ export async function getAllSheetData(): Promise<{
  */
 export async function getSheetNames(): Promise<string[]> {
   try {
-    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/sheets`, {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/sheets`, {
       method: "GET",
+      headers: getAuthHeaders(),
       signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
     });
 
@@ -245,12 +257,10 @@ export async function updateSheetData(
 ): Promise<any> {
   try {
     const response = await fetch(
-      `${BACKEND_CONFIG.BASE_URL}/api/update-sheet`,
+      `${BACKEND_CONFIG.BASE_URL}/update-sheet`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ sheetName, data }),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
       },
@@ -312,9 +322,10 @@ export async function updateSheetData(
 export async function deleteFileData(filename: string): Promise<any> {
   try {
     const response = await fetch(
-      `${BACKEND_CONFIG.BASE_URL}/api/file/${encodeURIComponent(filename)}`,
+      `${BACKEND_CONFIG.BASE_URL}/file/${encodeURIComponent(filename)}`,
       {
         method: "DELETE",
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
       },
     );
@@ -375,8 +386,9 @@ export async function deleteFileData(filename: string): Promise<any> {
  */
 export async function getBatchInformation(): Promise<any> {
   try {
-    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/api/batches`, {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/batches`, {
       method: "GET",
+      headers: getAuthHeaders(),
       signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
     });
 
@@ -431,9 +443,10 @@ export async function getBatchInformation(): Promise<any> {
 export async function deleteBatchData(batchId: string): Promise<any> {
   try {
     const response = await fetch(
-      `${BACKEND_CONFIG.BASE_URL}/api/batch/${encodeURIComponent(batchId)}`,
+      `${BACKEND_CONFIG.BASE_URL}/batch/${encodeURIComponent(batchId)}`,
       {
         method: "DELETE",
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
       },
     );

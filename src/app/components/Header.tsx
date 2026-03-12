@@ -33,9 +33,11 @@ interface HeaderProps {
     months?: string[];
   }) => void;
   showFilters?: boolean | { projectOnly: true };
+  userEmail?: string;
+  onLogout?: () => void;
 }
 
-export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
+export function Header({ title, onFilterChange, showFilters, userEmail, onLogout }: HeaderProps) {
   const [selectedYear, setSelectedYear] = useState<string>("all");
   const [selectedProject, setSelectedProject] = useState<string>("all");
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
@@ -485,6 +487,41 @@ export function Header({ title, onFilterChange, showFilters }: HeaderProps) {
               </button>
             </div>
           )}
+
+          {/* User Profile & Logout */}
+          <div className="flex items-center gap-3 pl-3 border-l border-gray-200">
+            <div className="flex flex-col items-end mr-2">
+              <span className="text-sm font-semibold text-gray-900 leading-none">
+                {userEmail?.split('@')[0] || "User"}
+              </span>
+              <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider mt-1">
+                {userEmail?.includes('admin') ? 'Administrator' : 'General User'}
+              </span>
+            </div>
+            <div className="relative">
+               <button 
+                 onClick={() => setShowUserMenu(!showUserMenu)}
+                 className="h-9 w-9 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 hover:bg-blue-100 transition-colors"
+               >
+                 <User size={20} />
+               </button>
+               
+               {showUserMenu && (
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                   <div className="p-3 border-b border-gray-50 bg-gray-50/50">
+                     <p className="text-xs text-gray-500 font-medium truncate">{userEmail}</p>
+                   </div>
+                   <button 
+                     onClick={onLogout}
+                     className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
+                   >
+                     <RotateCcw size={16} className="rotate-90" />
+                     <span>Sign Out</span>
+                   </button>
+                 </div>
+               )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

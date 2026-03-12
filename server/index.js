@@ -1155,6 +1155,119 @@ app.delete("/api/batch/:batchId", async (req, res) => {
   }
 });
 
+// Auth endpoints (Proxy for local dev)
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+  
+  try {
+    // This is a minimal implementation for local dev
+    // In production, the Netlify Function handles this
+    const { getUsers } = await import("../netlify/functions/utils/googleSheets.js");
+    const { generateToken } = await import("../netlify/functions/utils/auth.js");
+    const bcrypt = await import("bcryptjs");
+    
+    const users = await getUsers();
+    const user = users.find(u => u.email === email);
+    
+    if (!user || !(await bcrypt.default.compare(password, user.password_hash))) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+    
+    if (user.status !== 'active') {
+      return res.status(403).json({ message: "Account is suspended" });
+    }
+    
+    const token = generateToken({ id: user.id, email: user.email, role: user.role });
+    
+    res.json({
+      token,
+      user: { id: user.id, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error("Local login error:", error);
+    res.status(500).json({ message: "Internal server error", error: error.message });
+  }
+});
+
+// User Management (Proxy for local dev)
+app.get("/api/getUsers", async (req, res) => {
+  try {
+    const { getUsers } = await import("../netlify/functions/utils/googleSheets.js");
+    const users = await getUsers();
+    const safeUsers = users.map(({ password_hash, ...u }) => u);
+    res.json(safeUsers);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.post("/api/createUser", async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+    const { getUsers, saveUsers } = await import("../netlify/functions/utils/googleSheets.js");
+    const bcrypt = await import("bcryptjs");
+    const users = await getUsers();
+    
+    if (users.find(u => u.email === email)) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    const salt = await bcrypt.default.genSalt(10);
+    const password_hash = await bcrypt.default.hash(password, salt);
+
+    const newUser = {
+      id: Date.now().toString(),
+      email,
+      password_hash,
+      role,
+      status: "active",
+      created_at: new Date().toISOString().split("T")[0],
+    };
+
+    users.push(newUser);
+    await saveUsers(users);
+    
+    const { password_hash: _, ...safeUser } = newUser;
+    res.status(201).json({ message: "User created", user: safeUser });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.put("/api/updateUser", async (req, res) => {
+  try {
+    const { id, email, role, status } = req.body;
+    const { getUsers, saveUsers } = await import("../netlify/functions/utils/googleSheets.js");
+    const users = await getUsers();
+    const userIndex = users.findIndex(u => u.id === id);
+
+    if (userIndex === -1) return res.status(404).json({ message: "Not found" });
+
+    if (email) users[userIndex].email = email;
+    if (role) users[userIndex].role = role;
+    if (status) users[userIndex].status = status;
+
+    await saveUsers(users);
+    res.json({ message: "Updated" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.delete("/api/deleteUser", async (req, res) => {
+  try {
+    const { id } = req.body;
+    const { getUsers, saveUsers } = await import("../netlify/functions/utils/googleSheets.js");
+    const users = await getUsers();
+    const updatedUsers = users.filter(u => u.id !== id);
+    
+    await saveUsers(updatedUsers);
+    res.json({ message: "Deleted" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
 });

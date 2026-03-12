@@ -4,27 +4,31 @@ import {
   PieChart,
   TrendingUp,
   Database,
-  Package,
   Upload,
+  Users,
 } from "lucide-react";
 import { cn } from "./KPICard";
 
 interface SidebarProps {
   currentView: string;
   onChangeView: (view: string) => void;
+  userRole: string;
 }
 
-export function Sidebar({ currentView, onChangeView }: SidebarProps) {
+export function Sidebar({ currentView, onChangeView, userRole }: SidebarProps) {
+  const isAdmin = userRole === "admin";
+
   const menuItems = [
-    { id: "overview", label: "Procurement Overview", icon: BarChart3 },
-    { id: "insight", label: "Cost Insights", icon: PieChart },
-    { id: "forecast", label: "Forecast & Planning", icon: TrendingUp },
-  ];
+    { id: "overview", label: "Dashboard", icon: BarChart3, roles: ["admin", "user"] },
+    { id: "insight", label: "Procurement", icon: PieChart, roles: ["admin", "user"] },
+    { id: "forecast", label: "Planning", icon: TrendingUp, roles: ["admin", "user"] },
+  ].filter(item => item.roles.includes(userRole));
 
   const bottomMenuItems = [
-    { id: "data-upload", label: "Upload Data", icon: Upload },
-    { id: "data-source", label: "Data Source", icon: Database },
-  ];
+    { id: "data-upload", label: "Upload Data", icon: Upload, roles: ["admin"] },
+    { id: "data-source", label: "Data Source", icon: Database, roles: ["admin"] },
+    { id: "users", label: "Users", icon: Users, roles: ["admin"] },
+  ].filter(item => item.roles.includes(userRole));
 
   return (
     <div className="fixed left-0 top-0 h-full w-20 hover:w-64 bg-white border-r border-gray-200 flex flex-col z-50 transition-all duration-300 group overflow-visible">
@@ -75,15 +79,28 @@ export function Sidebar({ currentView, onChangeView }: SidebarProps) {
 
       {/* Bottom Menu */}
       <div className="px-4 py-4 space-y-2 border-t border-gray-100">
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
+          Management
+        </div>
         {bottomMenuItems.map((item) => (
           <button
             key={item.id}
             onClick={() => onChangeView(item.id)}
-            className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all duration-200 text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+            className={cn(
+              "w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all duration-200",
+              currentView === item.id
+                ? "bg-blue-50 text-blue-600 border border-blue-200"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-50",
+            )}
           >
             <item.icon
               size={20}
-              className="min-w-[20px] text-gray-500 group-hover/btn:text-gray-700"
+              className={cn(
+                "min-w-[20px] transition-colors",
+                currentView === item.id
+                  ? "text-blue-600"
+                  : "text-gray-500 group-hover/btn:text-gray-700",
+              )}
             />
             <span className="font-medium text-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
               {item.label}

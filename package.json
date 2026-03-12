@@ -8,7 +8,8 @@
     "dev": "node node_modules/vite/bin/vite.js",
     "server": "node server/index.js",
     "lint": "typescript node_modules/typescript/bin/tsc --noEmit",
-    "dev:all": "concurrently \"npm run dev\" \"npm run server\""
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\"",
+    "dev:netlify": "netlify dev"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -42,6 +43,7 @@
     "@radix-ui/react-toggle": "1.1.2",
     "@radix-ui/react-toggle-group": "1.1.2",
     "@radix-ui/react-tooltip": "1.1.8",
+    "bcryptjs": "^3.0.3",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
@@ -52,6 +54,7 @@
     "express": "^4.21.2",
     "googleapis": "^144.0.0",
     "input-otp": "1.4.2",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "0.487.0",
     "motion": "12.23.24",
     "next-themes": "0.4.6",
