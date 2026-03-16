@@ -7,6 +7,7 @@ import {
   Bell,
   Settings,
   X,
+  LogOut,
 } from "lucide-react";
 import { getSheetDataByName } from "../../services/googleSheetsService";
 
@@ -37,7 +38,13 @@ interface HeaderProps {
   onLogout?: () => void;
 }
 
-export function Header({ title, onFilterChange, showFilters, userEmail, onLogout }: HeaderProps) {
+export function Header({
+  title,
+  onFilterChange,
+  showFilters,
+  userEmail,
+  onLogout,
+}: HeaderProps) {
   const [selectedYear, setSelectedYear] = useState<string>("all");
   const [selectedProject, setSelectedProject] = useState<string>("all");
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
@@ -190,6 +197,7 @@ export function Header({ title, onFilterChange, showFilters, userEmail, onLogout
     const handleClickOutside = (event: MouseEvent) => {
       if (!headerRef.current?.contains(event.target as Node)) {
         setActiveDropdown(null);
+        setShowUserMenu(false);
       }
     };
 
@@ -303,11 +311,12 @@ export function Header({ title, onFilterChange, showFilters, userEmail, onLogout
               {showFilters === true && (
                 <div className="relative" ref={monthDropdownRef}>
                   <button
-                    onClick={() =>
+                    onClick={() => {
+                      setShowUserMenu(false);
                       setActiveDropdown(
                         activeDropdown === "month" ? null : "month",
-                      )
-                    }
+                      );
+                    }}
                     className="h-[38px] w-[140px] px-3 py-2 text-sm font-normal border border-gray-300 rounded-lg bg-white text-gray-900 flex items-center justify-between hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <div className="flex items-center gap-1 flex-wrap overflow-hidden">
@@ -376,11 +385,12 @@ export function Header({ title, onFilterChange, showFilters, userEmail, onLogout
               {showFilters === true && (
                 <div className="relative" ref={yearDropdownRef}>
                   <button
-                    onClick={() =>
+                    onClick={() => {
+                      setShowUserMenu(false);
                       setActiveDropdown(
                         activeDropdown === "year" ? null : "year",
-                      )
-                    }
+                      );
+                    }}
                     className="h-[38px] w-[140px] px-3 py-2 text-sm font-normal border border-gray-300 rounded-lg bg-white text-gray-900 flex items-center justify-between hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <span>
@@ -428,11 +438,12 @@ export function Header({ title, onFilterChange, showFilters, userEmail, onLogout
               {/* Project Filter - always show when filters are enabled */}
               <div className="relative" ref={projectDropdownRef}>
                 <button
-                  onClick={() =>
+                  onClick={() => {
+                    setShowUserMenu(false);
                     setActiveDropdown(
                       activeDropdown === "project" ? null : "project",
-                    )
-                  }
+                    );
+                  }}
                   className="h-[38px] w-[140px] px-3 py-2 text-sm font-normal border border-gray-300 rounded-lg bg-white text-gray-900 flex items-center justify-between hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
                   <span>
@@ -492,34 +503,42 @@ export function Header({ title, onFilterChange, showFilters, userEmail, onLogout
           <div className="flex items-center gap-3 pl-3 border-l border-gray-200">
             <div className="flex flex-col items-end mr-2">
               <span className="text-sm font-semibold text-gray-900 leading-none">
-                {userEmail?.split('@')[0] || "User"}
+                {userEmail?.split("@")[0] || "User"}
               </span>
               <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider mt-1">
-                {userEmail?.includes('admin') ? 'Administrator' : 'General User'}
+                {userEmail?.includes("admin")
+                  ? "Administrator"
+                  : "General User"}
               </span>
             </div>
             <div className="relative">
-               <button 
-                 onClick={() => setShowUserMenu(!showUserMenu)}
-                 className="h-9 w-9 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 hover:bg-blue-100 transition-colors"
-               >
-                 <User size={20} />
-               </button>
-               
-               {showUserMenu && (
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                   <div className="p-3 border-b border-gray-50 bg-gray-50/50">
-                     <p className="text-xs text-gray-500 font-medium truncate">{userEmail}</p>
-                   </div>
-                   <button 
-                     onClick={onLogout}
-                     className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
-                   >
-                     <RotateCcw size={16} className="rotate-90" />
-                     <span>Sign Out</span>
-                   </button>
-                 </div>
-               )}
+              <button
+                onClick={() => {
+                  setActiveDropdown(null);
+                  setShowUserMenu(!showUserMenu);
+                }}
+                className="h-9 w-9 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 hover:bg-blue-100 transition-colors"
+              >
+                <User size={20} />
+              </button>
+
+              {showUserMenu && (
+                <div className="absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                  <div className="p-1">
+                    <div className="px-3 py-2 text-xs text-gray-500 truncate">
+                      {userEmail}
+                    </div>
+
+                    <div
+                      onClick={onLogout}
+                      className="px-3 py-2 text-sm font-semibold hover:bg-gray-50 cursor-pointer rounded flex items-center gap-2 text-red-600"
+                    >
+                      <LogOut size={16} />
+                      Sign Out
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

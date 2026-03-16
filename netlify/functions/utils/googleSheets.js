@@ -34,6 +34,7 @@ export async function getUsers() {
 
 export async function saveUsers(users) {
   try {
+    console.log(`💾 [GoogleSheets] Saving ${users.length} users...`);
     const headers = ["id", "email", "password_hash", "role", "status", "created_at"];
     const values = [
       headers,
@@ -47,15 +48,23 @@ export async function saveUsers(users) {
       ]),
     ];
 
+    // Clear the existing range first to prevent stale data when user count decreases
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: SPREADSHEET_ID,
+      range: "users!A:F",
+    });
+
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: "users!A1:F",
+      range: "users!A1",
       valueInputOption: "RAW",
       requestBody: { values },
     });
+    
+    console.log("✅ [GoogleSheets] Users saved successfully");
     return true;
   } catch (error) {
-    console.error("Error saving users to Google Sheets:", error.message);
+    console.error("❌ [GoogleSheets] Error saving users:", error.message);
     throw error;
   }
 }

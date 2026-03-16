@@ -15,17 +15,39 @@ const handler = async (event, context) => {
   }
 
   try {
-    const { id } = JSON.parse(event.body);
+    // Robust ID Extraction: Try path parameters, query parameters, or manual path parsing
+    let id = event.pathParameters?.id || event.queryStringParameters?.id;
+
+    if (!id && event.path) {
+      const pathSegments = event.path.split("/").filter(Boolean);
+      const lastSegment = pathSegments[pathSegments.length - 1];
+      if (lastSegment && lastSegment !== "deleteUser") {
+        id = lastSegment;
+      }
+    }
+
+    // Fallback to body
+    if (!id && event.body) {
+      try {
+        const body = JSON.parse(event.body);
+        id = body.id;
+      } catch {}
+    }
 
     if (!id) {
+      console.error("❌ [DeleteUser] ID Missing in event:", {
+        path: event.path,
+        pathParameters: event.pathParameters,
+        query: event.queryStringParameters,
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ message: "User ID is required" }),
       };
     }
 
-    // Prevent admin from deleting themselves
-    if (id === event.user.id) {
+    // Safeguard 1: Prevent deleting self
+    if (String(id).trim() === String(event.user.id).trim()) {
       return {
         statusCode: 400,
         body: JSON.stringify({ message: "You cannot delete your own account" }),
@@ -33,7 +55,21 @@ const handler = async (event, context) => {
     }
 
     const users = await getUsers();
-    const updatedUsers = users.filter(u => u.id !== id);
+    console.log(`👥 [DeleteUser] Users before: ${users.length}`);
+
+    // Safeguard 2: Prevent deleting the last admin
+    if (users.filter(u => u.role === "admin" && u.status === "active").length <= 1) {
+      const targetUser = users.find(u => String(u.id).trim() === String(id).trim());
+      if (targetUser && targetUser.role === "admin") {
+         return {
+          statusCode: 400,
+          body: JSON.stringify({ message: "Cannot delete the last active administrator" }),
+        };
+      }
+    }
+
+    const updatedUsers = users.filter(u => String(u.id).trim() !== String(id).trim());
+    console.log(`👥 [DeleteUser] Users after filter: ${updatedUsers.length}`);
 
     if (users.length === updatedUsers.length) {
       return {

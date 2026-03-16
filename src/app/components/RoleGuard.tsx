@@ -1,6 +1,6 @@
-import React from 'react';
-import { Navigate } from 'react-router-dom';
-import authService from '../../services/authService';
+import React from "react";
+import { Navigate } from "react-router-dom";
+import authService from "../../services/authService";
 
 interface RoleGuardProps {
   children: React.ReactNode;
@@ -11,11 +11,11 @@ const RoleGuard: React.FC<RoleGuardProps> = ({ children, roles }) => {
   const user = authService.getCurrentUser();
   const isAuthenticated = authService.isAuthenticated();
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !user) {
     return <Navigate to="/login" replace />;
   }
 
-  if (roles && user && !roles.includes(user.role)) {
+  if (roles && (!user?.role || !roles.includes(user.role))) {
     return <Navigate to="/unauthorized" replace />;
   }
 

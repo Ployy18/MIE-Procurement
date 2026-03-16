@@ -8,15 +8,11 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  BarChart,
-  Bar,
-  AreaChart,
   Area,
 } from "recharts";
 import { Calendar, AlertCircle } from "lucide-react";
 import {
   getTab1Data,
-  getProcurementLineData,
 } from "../../services/googleSheetsService";
 import { LoadingState } from "./ui/LoadingState";
 import {
@@ -38,19 +34,7 @@ type MonthlySpend = {
   forecast: number | null;
 };
 
-type MonthlyCategory = {
-  month: string;
-  year: string;
-  date: number; // Use timestamp for compatibility
-} & Record<string, string | number | undefined>;
 
-type ProcurementLineData = {
-  month: string;
-  year: string;
-  date: number; // Use timestamp for compatibility
-  totalQuantity: number;
-  totalAmount: number;
-} & Record<string, number | undefined>;
 
 interface ProjectBurnRateData {
   month: string;
@@ -229,157 +213,7 @@ function calculateSeasonalFactors(
 // This would improve maintainability and make the main component more focused.
 // ============================================================================
 
-// Configuration-based item code categorization for better maintainability
-const CATEGORY_RULES: Record<string, string[]> = {
-  CCTV: ["CAMERA", "DVR", "NVR", "P-CAMERA", "P-NVR"],
-  Storage: ["HDD", "SSD"],
-  Network: ["SWITCH", "P-SWITCH", "LAN", "SFP"],
-  "Power & Electrical": ["POWER", "POWERSUP", "THW", "VCT", "NYY"],
-  "Installation Material": ["ACCS", "BNC", "CLAMP"],
-  "Office Supply": ["TONER"],
-  "IT Device": ["P-PHONE", "P-IPAD", "SERVER"],
-  Software: ["P-SOFTWARE"],
-  "Service Operation": ["SVSUB"],
-  "Other Expense": ["SVOTHER"],
-  Finance: ["SV150100"],
-};
 
-// Function to categorize Item Codes based on procurement patterns
-const categorizeItemCode = (code: string): string => {
-  if (!code) return "Uncategorized";
-
-  const upperCode = code.toUpperCase();
-
-  // Loop through category rules for efficient matching
-  for (const [category, prefixes] of Object.entries(CATEGORY_RULES)) {
-    if (prefixes.some((prefix) => upperCode.startsWith(prefix))) {
-      return category;
-    }
-  }
-
-  return "Uncategorized";
-};
-// DATA TRANSFORMATION FUNCTIONS
-// ============================================================================
-
-interface SheetDataRow {
-  Date?: string;
-  "Net Amount"?: string | number;
-  [key: string]: any;
-}
-
-interface LineDataRow {
-  Date?: string;
-  "Item Code"?: string;
-  Quantity?: string | number;
-  "Total Amount"?: string | number;
-  [key: string]: any;
-}
-
-// Transform procurement line data to forecast format
-const transformProcurementLineData = (
-  lineData: LineDataRow[],
-): ProcurementLineData[] => {
-  // Group by month-year and category
-  const monthlyCategoryData = lineData.reduce(
-    (
-      acc: Record<string, Record<string, { quantity: number; amount: number }>>,
-      row,
-    ) => {
-      const dateStr = row.Date;
-      const itemCode = row["Item Code"] || "";
-
-      const quantity = parseNumber(row.Quantity);
-      const amount = parseNumber(row["Total Amount"]);
-
-      if (!dateStr) return acc;
-
-      const date = new Date(`${dateStr}T00:00:00`);
-      const year = date.getFullYear().toString();
-      const month = MONTHS[date.getMonth()];
-      const monthYearKey = `${year}-${month}`;
-
-      const category = categorizeItemCode(itemCode);
-
-      if (!acc[monthYearKey]) {
-        acc[monthYearKey] = {};
-      }
-
-      if (!acc[monthYearKey][category]) {
-        acc[monthYearKey][category] = { quantity: 0, amount: 0 };
-      }
-
-      acc[monthYearKey][category].quantity += quantity;
-      acc[monthYearKey][category].amount += amount;
-
-      return acc;
-    },
-    {},
-  );
-
-  // Convert to array format and create continuous timeline
-  const monthEntries = Object.entries(monthlyCategoryData);
-  if (monthEntries.length === 0) return [];
-
-  // Sort chronologically using proper Date sorting
-  monthEntries.sort((a, b) => {
-    const [year1, month1] = a[0].split("-");
-    const [year2, month2] = b[0].split("-");
-
-    const date1 = createMonthDate(year1, month1);
-    const date2 = createMonthDate(year2, month2);
-
-    return date1.getTime() - date2.getTime();
-  });
-
-  // Create continuous monthly timeline
-  const [firstYear, firstMonth] = monthEntries[0][0].split("-");
-  const [lastYear, lastMonth] =
-    monthEntries[monthEntries.length - 1][0].split("-");
-
-  const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
-  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
-
-  const result: ProcurementLineData[] = [];
-  let currentDate = createMonthDate(firstYear, firstMonth);
-  const endDate = createMonthDate(lastYear, lastMonth);
-
-  while (currentDate <= endDate) {
-    const year = currentDate.getFullYear().toString();
-    const month = MONTHS[currentDate.getMonth()];
-    const monthYearKey = `${year}-${month}`;
-    const categoryData = monthlyCategoryData[monthYearKey] || {};
-
-    // Calculate total quantity and amount for the month
-    let totalQuantity = 0;
-    let totalAmount = 0;
-
-    Object.values(categoryData).forEach((data) => {
-      totalQuantity += data.quantity;
-      totalAmount += data.amount;
-    });
-
-    const monthData: Record<string, number | string | undefined> = {
-      month: month,
-      year: year,
-      date: new Date(currentDate).getTime(),
-      totalQuantity,
-      totalAmount,
-    };
-
-    // Add category-specific data
-    Object.entries(categoryData).forEach(([category, data]) => {
-      monthData[category] = data.amount;
-    });
-
-    result.push(monthData as ProcurementLineData);
-
-    // Move to next month
-    currentDate.setMonth(currentDate.getMonth() + 1);
-  }
-
-  return result;
-};
 
 // ============================================================================
 // FORECAST UTILITIES
@@ -582,96 +416,13 @@ const forecastWeightedMovingAverage = (
   return forecasts;
 };
 
-// Generate monthly expense forecast using shared weighted moving average
-const generateMonthlyExpenseForecast = (
-  historicalData: ProcurementLineData[],
-): ProcurementLineData[] => {
-  // Extract total amounts without filtering zeros
-  const values = historicalData.map((d) => d.totalAmount || 0);
 
-  if (values.length < 3) {
-    const lastValue = values.length > 0 ? Math.max(...values) : 100000;
-    const firstValue =
-      values.length > 1 ? Math.min(...values.filter((v) => v > 0)) : lastValue;
-    const n = values.length > 1 ? values.length - 1 : 1;
 
-    // Calculate CAGR: (last/first)^(1/n) - 1
-    const cagr =
-      firstValue > 0 ? Math.pow(lastValue / firstValue, 1 / n) - 1 : 0.05;
-    const growthRate = Math.max(0.01, Math.min(0.5, cagr)); // Clamp between 1% and 50%
-
-    // Generate 6 months of CAGR-based fallback forecast (updated from 3)
-    const lastYear = Number(
-      historicalData[historicalData.length - 1]?.year ||
-        new Date().getFullYear(),
-    );
-    const lastMonth = historicalData[historicalData.length - 1]?.month || "Dec";
-    const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
-
-    const fallbackForecast = [];
-    for (let i = 1; i <= 6; i++) {
-      const forecastValue = lastValue * Math.pow(1 + growthRate, i);
-      const monthIndex = (lastMonthIndex + i) % 12;
-      const yearOffset = Math.floor((lastMonthIndex + i) / 12);
-      const forecastYear = (lastYear + yearOffset).toString();
-
-      fallbackForecast.push({
-        month: MONTHS[monthIndex],
-        year: forecastYear,
-        date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
-        totalQuantity: 0,
-        totalAmount: Math.round(forecastValue),
-      } as any);
-    }
-
-    return fallbackForecast;
-  }
-
-  // Use shared forecasting utility for consistent model with seasonal factors
-  if (!historicalData.length) return [];
-  const lastYear = Number(historicalData[historicalData.length - 1].year);
-  const lastMonth = historicalData[historicalData.length - 1].month;
-
-  // Calculate seasonal factors using shared helper
-  const seriesData = historicalData.map((d) => ({
-    month: d.month,
-    value: d.totalAmount || 0,
-  }));
-  const seasonalFactors = calculateSeasonalFactors(seriesData);
-
-  const forecasts = forecastWeightedMovingAverage(values, {
-    horizon: 6,
-    seasonalFactors,
-    lastMonth,
-    lastYear,
-    enableSeasonality: historicalData.length >= 24, // Align with seasonal factor calculation requirements
-  });
-
-  // Convert forecasts back to ProcurementLineData format
-  const forecastData: ProcurementLineData[] = [];
-  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
-
-  forecasts.forEach((forecastValue, i) => {
-    const monthIndex = (lastMonthIndex + i + 1) % 12;
-    const yearOffset = Math.floor((lastMonthIndex + i + 1) / 12);
-    const forecastYear = (lastYear + yearOffset).toString();
-
-    // Ensure forecast value is finite before pushing
-    const safeForecastValue = Number.isFinite(forecastValue)
-      ? forecastValue
-      : 0;
-
-    forecastData.push({
-      month: MONTHS[monthIndex],
-      year: forecastYear,
-      date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
-      totalQuantity: 0,
-      totalAmount: safeForecastValue,
-    } as any);
-  });
-
-  return forecastData;
-};
+interface SheetDataRow {
+  Date?: string;
+  "Net Amount"?: string | number;
+  [key: string]: any;
+}
 
 // Data validation utilities
 const validateSpendingData = (data: MonthlySpend[]): boolean => {
@@ -986,8 +737,8 @@ const calculateRMSE = (historicalData: MonthlySpend[]): number => {
 
   return errors.length > 0
     ? Math.sqrt(
-        errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
-      )
+      errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
+    )
     : 0;
 };
 
@@ -1001,23 +752,9 @@ interface ForecastDataPoint {
   forecast_high?: number;
 }
 
-interface CategoryForecastData {
-  month: string;
-  year: string;
-  date: number;
-  [category: string]: number | string | undefined;
-}
-
 // Helper function for creating month dates consistently
 function createMonthDate(year: string, month: string): Date {
   return new Date(parseInt(year), Math.max(0, MONTHS.indexOf(month)), 1);
-}
-
-// Helper function for extracting category keys
-function extractCategories(item: Record<string, any>): string[] {
-  return Object.keys(item).filter(
-    (key) => key !== "month" && key !== "year" && key !== "date",
-  );
 }
 
 // Generate forecast data using 6-month weighted moving average with outlier removal
@@ -1133,8 +870,8 @@ const generateMovingAverageForecast = (
   const rmse =
     errors.length > 0
       ? Math.sqrt(
-          errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
-        )
+        errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
+      )
       : 0;
 
   // Use shared forecasting utility with full historical series (winsorized if applicable)
@@ -1195,162 +932,7 @@ const generateMovingAverageForecast = (
   return forecastData;
 };
 
-const transformCategoryData = (lineData: LineDataRow[]) => {
-  // Group by month-year and category
-  const monthlyCategoryData = lineData.reduce(
-    (acc: Record<string, Record<string, number>>, row) => {
-      const dateStr = row.Date;
-      const category = categorizeItemCode(row["Item Code"] || "");
 
-      // Fix numeric parsing bug with commas
-      const amount = parseNumber(row["Total Amount"]);
-
-      if (!dateStr || !category || isNaN(amount) || amount <= 0) return acc;
-
-      const date = new Date(`${dateStr}T00:00:00`);
-      const year = date.getFullYear().toString();
-      const month = MONTHS[date.getMonth()];
-      const monthYearKey = `${year}-${month}`;
-
-      if (!acc[monthYearKey]) {
-        acc[monthYearKey] = {};
-      }
-
-      acc[monthYearKey][category] = (acc[monthYearKey][category] || 0) + amount;
-
-      return acc;
-    },
-    {},
-  );
-
-  // Convert to array format and create continuous timeline
-  const monthEntries = Object.entries(monthlyCategoryData);
-  if (monthEntries.length === 0) return [];
-
-  // Sort by date
-  monthEntries.sort((a, b) => {
-    const [year1, month1] = a[0].split("-");
-    const [year2, month2] = b[0].split("-");
-
-    const date1 = createMonthDate(year1, month1);
-    const date2 = createMonthDate(year2, month2);
-
-    return date1.getTime() - date2.getTime();
-  });
-
-  // Create continuous monthly timeline
-  const [firstYear, firstMonth] = monthEntries[0][0].split("-");
-  const [lastYear, lastMonth] =
-    monthEntries[monthEntries.length - 1][0].split("-");
-
-  const firstMonthIndex = Math.max(0, MONTHS.indexOf(firstMonth));
-  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
-
-  const result: MonthlyCategory[] = [];
-  let currentDate = createMonthDate(firstYear, firstMonth);
-  const endDate = createMonthDate(lastYear, lastMonth);
-
-  while (currentDate <= endDate) {
-    const year = currentDate.getFullYear().toString();
-    const month = MONTHS[currentDate.getMonth()];
-    const monthYearKey = `${year}-${month}`;
-    const categoryData = monthlyCategoryData[monthYearKey] || {};
-
-    result.push({
-      month,
-      year,
-      date: new Date(currentDate).getTime(),
-      ...categoryData,
-    });
-
-    // Move to next month
-    currentDate.setMonth(currentDate.getMonth() + 1);
-  }
-
-  return result;
-};
-
-// Generate category forecast using 6-month weighted moving average with seasonal adjustment
-const generateCategoryForecast = (
-  historicalData: MonthlyCategory[],
-  categories: string[],
-): CategoryForecastData[] => {
-  // Prevent array access errors
-  if (!historicalData.length) return [];
-
-  const forecastData: CategoryForecastData[] = [];
-  const lastYear = Number(historicalData[historicalData.length - 1].year);
-  const lastMonth = historicalData[historicalData.length - 1].month;
-  const lastMonthIndex = Math.max(0, MONTHS.indexOf(lastMonth));
-
-  // Compute seasonal factors per category using shared helper
-  const categorySeasonalFactors: {
-    [category: string]: Record<string, number>;
-  } = {};
-
-  categories.forEach((category) => {
-    // Create series data for seasonal factor calculation
-    const categorySeriesData = historicalData.map((d) => ({
-      month: d.month,
-      value: parseNumber(d[category]),
-    }));
-
-    // Use shared seasonal factor calculator
-    categorySeasonalFactors[category] =
-      calculateSeasonalFactors(categorySeriesData);
-  });
-
-  // Pre-compute full category values for better model accuracy
-  const categoryValues: { [key: string]: number[] } = {};
-  categories.forEach((category) => {
-    // Use full historical series instead of just last 6 months
-    const values = historicalData.map((item) => parseNumber(item[category]));
-    categoryValues[category] = values.length > 0 ? values : [0];
-  });
-
-  // Limit forecast horizon to 6 months
-  const maxForecastHorizon = 6;
-
-  // Pre-compute forecasts for all categories to avoid recalculation in loop
-  const categoryForecasts: { [category: string]: number[] } = {};
-  categories.forEach((category) => {
-    const values = categoryValues[category];
-
-    // Use shared forecasting utility with seasonal factors
-    categoryForecasts[category] = forecastWeightedMovingAverage(values, {
-      horizon: maxForecastHorizon,
-      seasonalFactors: categorySeasonalFactors[category] || {},
-      lastMonth: lastMonth,
-      lastYear: Number(lastYear),
-      enableSeasonality: historicalData.length >= 24,
-    });
-  });
-
-  for (let i = 1; i <= maxForecastHorizon; i++) {
-    const monthIndex = (lastMonthIndex + i) % 12;
-    const yearOffset = Math.floor((lastMonthIndex + i) / 12);
-    const forecastYear = (lastYear + yearOffset).toString();
-    const forecastMonth = MONTHS[monthIndex];
-
-    const forecastItem: any = {
-      month: forecastMonth,
-      year: forecastYear,
-      date: new Date(parseInt(forecastYear), monthIndex, 1).getTime(),
-    };
-
-    // Generate forecast for each category using cached results
-    categories.forEach((category) => {
-      const forecasts = categoryForecasts[category];
-      // Get the forecast for this month (index i-1 since arrays are 0-based)
-      forecastItem[category] =
-        forecasts && forecasts.length >= i ? forecasts[i - 1] : 0;
-    });
-
-    forecastData.push(forecastItem);
-  }
-
-  return forecastData;
-};
 
 const ChartContainer = memo(
   ({
@@ -1400,13 +982,9 @@ ChartContainer.displayName = "ChartContainer";
 
 const ForecastPlanning: React.FC = () => {
   const [sheetData, setSheetData] = useState<MonthlySpend[]>([]);
-  const [categoryData, setCategoryData] = useState<any[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<"12months" | "18months">(
     "12months",
   );
-  const [procurementLineData, setProcurementLineData] = useState<
-    ProcurementLineData[]
-  >([]);
   const [loading, setLoading] = useState(true);
   const [projectBurnRateData, setProjectBurnRateData] = useState<
     ProjectBurnRateData[]
@@ -1426,26 +1004,15 @@ const ForecastPlanning: React.FC = () => {
         const transformedHeadData = transformSheetData(headData.rows);
         setSheetData(transformedHeadData);
 
-        // Fetch procurement line data for categories
-        const lineData = await getProcurementLineData();
-        const transformedCategoryData = transformCategoryData(lineData.rows);
-        setCategoryData(transformedCategoryData);
-
-        // Transform line data for procurement line forecasting
-        const transformedProcurementLineData = transformProcurementLineData(
-          lineData.rows,
-        );
-        setProcurementLineData(transformedProcurementLineData);
-
         // Initialize project list and selection
         const allProjects = Array.from(
           new Set(
             headData.rows.map((row) =>
               String(
                 row.Project ||
-                  row.projectCode ||
-                  row["Project Code"] ||
-                  "Default Project",
+                row.projectCode ||
+                row["Project Code"] ||
+                "Default Project",
               ),
             ),
           ),
@@ -1493,9 +1060,9 @@ const ForecastPlanning: React.FC = () => {
         const projectRows = allHeadRows.filter((row) => {
           const p = String(
             row.Project ||
-              row.projectCode ||
-              row["Project Code"] ||
-              "Default Project",
+            row.projectCode ||
+            row["Project Code"] ||
+            "Default Project",
           );
           return p === selectedProjectBurnRate;
         });
@@ -1529,49 +1096,7 @@ const ForecastPlanning: React.FC = () => {
   }, [forecastTrainingData]);
 
   // Memoized category data and forecast
-  const categories = useMemo(() => {
-    const allCategories = new Set<string>();
-    categoryData.forEach((item) => {
-      const extractedCategories = extractCategories(item);
-      extractedCategories.forEach((category) => allCategories.add(category));
-    });
-    // Sort categories in specific order: Service, Material, Other
-    const categoryOrder = ["Service", "Material", "Other"];
-    const sortedCategories = Array.from(allCategories).sort((a, b) => {
-      const aIndex = categoryOrder.indexOf(a);
-      const bIndex = categoryOrder.indexOf(b);
-      if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-      if (aIndex !== -1) return -1;
-      if (bIndex !== -1) return 1;
-      return a.localeCompare(b);
-    });
-    return sortedCategories;
-  }, [categoryData]);
 
-  const categoryForecastData = useMemo(() => {
-    if (categoryData.length === 0) return [];
-    return generateCategoryForecast(categoryData, categories);
-  }, [categoryData, categories]);
-
-  const categorySpendingData = useMemo(() => {
-    const historical = categoryData; // Use full historical data
-    return [...historical, ...categoryForecastData];
-  }, [categoryData, categoryForecastData]);
-
-  // Memoized procurement line forecast data
-  const monthlyExpenseForecastData = useMemo(() => {
-    if (procurementLineData.length === 0) return [];
-    return generateMonthlyExpenseForecast(procurementLineData);
-  }, [procurementLineData]);
-
-  const categoriesList = useMemo(() => {
-    const allCategories = new Set<string>();
-    procurementLineData.forEach((item) => {
-      const categories = extractCategories(item);
-      categories.forEach((category) => allCategories.add(category));
-    });
-    return Array.from(allCategories).sort();
-  }, [procurementLineData]);
 
   const spendingData = useMemo(() => {
     const historical = historicalDataOptions[selectedPeriod];
@@ -1635,7 +1160,7 @@ const ForecastPlanning: React.FC = () => {
     const averageSpend =
       actualValues.length > 0
         ? actualValues.reduce((sum: number, val: number) => sum + val, 0) /
-          actualValues.length
+        actualValues.length
         : 0;
     const totalForecast = forecastData.reduce(
       (sum: number, d: any) => sum + d.forecast,
@@ -1651,14 +1176,14 @@ const ForecastPlanning: React.FC = () => {
     const mean =
       actualValues.length > 0
         ? actualValues.reduce((sum: number, val: number) => sum + val, 0) /
-          actualValues.length
+        actualValues.length
         : 0;
     const variance =
       actualValues.length > 0
         ? actualValues.reduce(
-            (sum: number, val: number) => sum + Math.pow(val - mean, 2),
-            0,
-          ) / actualValues.length
+          (sum: number, val: number) => sum + Math.pow(val - mean, 2),
+          0,
+        ) / actualValues.length
         : 0;
     const stdDev = Math.sqrt(variance);
     const coefficientOfVariation = mean > 0 ? stdDev / mean : 0;
@@ -1676,8 +1201,8 @@ const ForecastPlanning: React.FC = () => {
     const forecastGrowth =
       averageSpend > 0
         ? ((totalForecast / forecastData.length - averageSpend) /
-            averageSpend) *
-          100
+          averageSpend) *
+        100
         : 0;
 
     if (process.env.NODE_ENV === "development") {
@@ -1832,11 +1357,10 @@ const ForecastPlanning: React.FC = () => {
                   <button
                     key={period}
                     onClick={() => setSelectedPeriod(period as any)}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
-                      selectedPeriod === period
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${selectedPeriod === period
                         ? "bg-blue-600 text-white shadow-md transform scale-105"
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                      }`}
                   >
                     {period === "12months"
                       ? "Last 12 Months"
@@ -1924,10 +1448,10 @@ const ForecastPlanning: React.FC = () => {
                           return numValue === 0
                             ? "0k"
                             : `${(numValue / 1000).toLocaleString("en-US", {
-                                minimumFractionDigits:
-                                  (numValue / 1000) % 1 === 0 ? 0 : 2,
-                                maximumFractionDigits: 2,
-                              })}k`;
+                              minimumFractionDigits:
+                                (numValue / 1000) % 1 === 0 ? 0 : 2,
+                              maximumFractionDigits: 2,
+                            })}k`;
                         }}
                       />
                       <Tooltip
@@ -2197,10 +1721,10 @@ const ForecastPlanning: React.FC = () => {
                       return numValue === 0
                         ? "0k"
                         : `${(numValue / 1000).toLocaleString("en-US", {
-                            minimumFractionDigits:
-                              (numValue / 1000) % 1 === 0 ? 0 : 2,
-                            maximumFractionDigits: 2,
-                          })}k`;
+                          minimumFractionDigits:
+                            (numValue / 1000) % 1 === 0 ? 0 : 2,
+                          maximumFractionDigits: 2,
+                        })}k`;
                     }}
                   />
                   <XAxis
@@ -2330,8 +1854,8 @@ const ForecastPlanning: React.FC = () => {
                 const remainingMonths = Math.max(
                   0,
                   (projectEndDate.getFullYear() - currentDate.getFullYear()) *
-                    12 +
-                    (projectEndDate.getMonth() - currentDate.getMonth()),
+                  12 +
+                  (projectEndDate.getMonth() - currentDate.getMonth()),
                 );
 
                 const projectedSpend =
@@ -2340,7 +1864,7 @@ const ForecastPlanning: React.FC = () => {
                 return (
                   projectedSpend > (Number(currentData.budget) || 0) &&
                   (Number(currentData.cumulative_spend) || 0) <=
-                    (Number(currentData.budget) || 0)
+                  (Number(currentData.budget) || 0)
                 );
               })() && (
                 <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-xl flex items-center gap-3 text-orange-700">
@@ -2354,10 +1878,10 @@ const ForecastPlanning: React.FC = () => {
             {projectBurnRatePlotData.length > 0 &&
               projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
                 .cumulative_spend >
-                (Number(
-                  projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
-                    .budget,
-                ) || 0) && (
+              (Number(
+                projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
+                  .budget,
+              ) || 0) && (
                 <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
                   <AlertCircle className="w-5 h-5 text-red-600 animate-pulse" />
                   <span className="text-sm font-semibold">

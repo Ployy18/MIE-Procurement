@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 
-import { motion } from "motion/react";
+import { motion } from "framer-motion";
 
 // Chart Utils
 import { shouldShowYearLabel } from "../../utils/chartAxisUtils";
@@ -1498,16 +1498,15 @@ export function CostInsights({
   const fetchCategoryPOs = async (categoryName: string) => {
     setLoadingCategoryPOs(true);
     try {
-      // Get both procurement_line and procurement_head data
-      const [lineDataResponse, headDataResponse] = await Promise.all([
-        getSheetDataByName("procurement_line"),
+      // Get head and line data from current sources
+      const [headDataResponse, lineDataResponse] = await Promise.all([
         getTab1Data(),
+        getProcurementLineData(),
       ]);
-
-      const lineRows = lineDataResponse.rows || [];
       const headRows = headDataResponse.rows || [];
+      const lineRows = lineDataResponse.rows || [];
 
-      // Check if this is a supplier name (contains common supplier keywords) or category
+      // Check if this is a supplier name or category
       const isSupplier =
         categoryName.includes("จำกัด") ||
         categoryName.includes("Company") ||
@@ -1515,18 +1514,12 @@ export function CostInsights({
         categoryName.includes("Co.") ||
         supplierSpendData.some((supplier) => supplier.name === categoryName);
 
-      // Set modal title based on type
-      const modalTitle = isSupplier
-        ? "PO Details by Supplier"
-        : "PO Details by Category";
-      setSelectedSupplierName(modalTitle);
-
-      // Filter line data by category name or supplier name and existing dashboard filters
+      // Filter procurement_line (lineRows) -> source of line items
       let categoryRows = lineRows.filter((row: any) => {
         if (isSupplier) {
-          // Filter by supplier name
-          const supplier = row.Supplier || row.supplier || "";
-          return supplier === categoryName;
+          const rowSupplier =
+            row.Supplier || row.supplier || row.supplierName || "";
+          return String(rowSupplier).trim() === categoryName.trim();
         } else {
           // Filter by category name (case-insensitive and partial match)
           const category = row.Category || row.category || "Other";
@@ -1537,12 +1530,11 @@ export function CostInsights({
         }
       });
 
-      // Apply year/project filters if active
+      // Apply year/project/month filters to categoryRows
       if (filters.year !== "all") {
         categoryRows = categoryRows.filter((row: any) => {
           const dateStr = row.Date || row.date || row["DATE"];
           if (dateStr) {
-            // Use parseDateSafe to get timestamp, then extract year
             const timestamp = parseDateSafe(dateStr);
             if (timestamp > 0) {
               const year = new Date(timestamp).getFullYear();
@@ -1555,12 +1547,10 @@ export function CostInsights({
       if (filters.project !== "all") {
         categoryRows = categoryRows.filter(
           (row: any) =>
-            (row.Project || row.projectCode || row["Project Code"]) ===
-            filters.project,
+            String(row.Project || row.projectCode || row["Project Code"]) ===
+            String(filters.project),
         );
       }
-
-      // Apply month filter
       if (filters.months && filters.months.length > 0) {
         categoryRows = categoryRows.filter((row: any) => {
           const dateStr = row.Date || row.date || row["DATE"];
@@ -1575,10 +1565,20 @@ export function CostInsights({
         });
       }
 
-      // Group by PO Number
+      // Step 1: Ensure PO Number is safely extracted
+      const getPONumber = (row: any) =>
+        row["PO Number"] ||
+        row["PO_Number"] ||
+        row["PO No"] ||
+        row.poNumber ||
+        "";
+
+      // Step 2: Group procurement_line rows by PO Number
       const poGroups = categoryRows.reduce(
         (acc: Record<string, any>, row: any) => {
-          const poNo = row["PO Number"];
+          const poNo = getPONumber(row);
+          if (!poNo) return acc;
+
           if (!acc[poNo]) {
             acc[poNo] = {
               poNumber: poNo,
@@ -1589,41 +1589,51 @@ export function CostInsights({
               lineItems: [],
             };
           }
+
           acc[poNo].lineItems.push({
             category: row.Category || row.category || "Other",
-            unitPrice: parseAmount(row["Unit Price"]),
-            amount: parseAmount(row["Total Amount"]),
-            description: row.Description || row.description || "-",
             itemCode: row["Item Code"] || row.itemCode || "-",
-            supplier: row.Supplier || row.supplier || "-",
+            description: row.Description || row.description || "-",
+            amount: parseAmount(row["Total Amount"] || row.totalPrice || 0),
           });
+
           return acc;
         },
         {},
       );
 
-      // Get total amounts from procurement_head for each PO
+      // Step 3: Attach total amount from procurement_head
       Object.keys(poGroups).forEach((poNo) => {
         const headRow = headRows.find(
-          (row: any) => String(row["PO Number"] || row.poNumber) === poNo,
+          (row: any) =>
+            String(
+              row["PO Number"] ||
+                row["PO_Number"] ||
+                row["PO No"] ||
+                row.poNumber,
+            ) === String(poNo),
         );
+
         if (headRow) {
           poGroups[poNo].totalAmount =
             parseAmount(
-              String(headRow["Total Amount"] || headRow.totalPrice || 0),
+              headRow["Total Amount"] ||
+                headRow["Net Amount"] ||
+                headRow.totalPrice ||
+                0,
             ) || 0;
         }
       });
 
+      // Step 4: Convert grouped object to sorted PO array
       const sortedPOs = Object.values(poGroups).sort((a: any, b: any) => {
         const dateA = parseDateSafe(a.date);
         const dateB = parseDateSafe(b.date);
-        return dateB - dateA; // Sort descending
+        return dateB - dateA;
       });
 
-      console.log("Fetched POs:", sortedPOs); // Debug log
       setSelectedCategoryPOs(sortedPOs);
-      setSelectedSupplierName(categoryName); // Set the actual name for title
+      setSelectedSupplierName(categoryName);
       setShowCategoryModal(true);
     } catch (error) {
       console.error("Error fetching category POs:", error);
@@ -1671,93 +1681,113 @@ export function CostInsights({
       setLoadingPOs(true);
       setSelectedMonthPOs([]);
 
-      // Get both procurement_line and procurement_head data
-      const [lineDataResponse, headDataResponse] = await Promise.all([
-        getProcurementLineData(),
+      // Get head and line data from current sources
+      const [headDataResponse, lineDataResponse] = await Promise.all([
         getTab1Data(),
+        getProcurementLineData(),
       ]);
 
-      const lineRows = lineDataResponse.rows || [];
       const headRows = headDataResponse.rows || [];
+      const lineRows = lineDataResponse.rows || [];
 
-      // Filter POs by project code from line data
-      let projectPOs = lineRows.filter((row: any) => {
+      // Filter headRows by project code
+      let projectRows = headRows.filter((row: any) => {
         const project = row.Project || row.project || row.projectCode || "";
         return project === projectCode;
       });
 
       // Apply YEAR filter
       if (filters.year !== "all") {
-        projectPOs = projectPOs.filter((row: any) => {
+        projectRows = projectRows.filter((row: any) => {
           const dateStr = row.Date || row.date || row["DATE"];
-          if (!dateStr) return false;
-
-          const timestamp = parseDateSafe(dateStr);
-          if (timestamp > 0) {
-            const year = new Date(timestamp).getFullYear();
-            return year.toString() === filters.year;
+          if (dateStr) {
+            const timestamp = parseDateSafe(dateStr);
+            if (timestamp > 0) {
+              const year = new Date(timestamp).getFullYear();
+              return year.toString() === filters.year;
+            }
           }
-
           return false;
         });
       }
 
       // Apply MONTH filter
       if (filters.months && filters.months.length > 0) {
-        projectPOs = projectPOs.filter((row: any) => {
+        projectRows = projectRows.filter((row: any) => {
           const dateStr = row.Date || row.date || row["DATE"];
-          if (!dateStr) return false;
-
-          const timestamp = parseDateSafe(dateStr);
-          if (timestamp > 0) {
-            const month = new Date(timestamp).getMonth() + 1;
-            return filters.months!.includes(month.toString());
+          if (dateStr) {
+            const timestamp = parseDateSafe(dateStr);
+            if (timestamp > 0) {
+              const month = new Date(timestamp).getMonth() + 1;
+              return filters.months!.includes(month.toString());
+            }
           }
-
           return false;
         });
       }
 
-      // Group by PO number and create PO details
-      const poMap = new Map();
-      projectPOs.forEach((row: any) => {
-        const poNumber = row["PO Number"] || row.poNumber || "";
-        if (!poNumber) return;
+      // Step 2: Build PO → lineItems map from procurement_line
+      const getPONumber = (row: any) =>
+        row["PO Number"] ||
+        row["PO_Number"] ||
+        row["PO No"] ||
+        row.poNumber ||
+        "";
 
-        if (!poMap.has(poNumber)) {
-          poMap.set(poNumber, {
-            poNumber: poNumber,
-            date: row.Date || row.date || "",
-            totalAmount: 0, // Will be updated from head data
-            category: row.Category || row.category || "Other",
-            description: row.Description || row.description || "No description",
-            projectCode: projectCode,
-            lineItems: [],
-          });
+      const poLineMap: Record<string, any[]> = {};
+
+      lineRows.forEach((row: any) => {
+        const poNo = getPONumber(row);
+        if (!poNo) return;
+
+        if (!poLineMap[poNo]) {
+          poLineMap[poNo] = [];
         }
 
-        // Add line item
-        const po = poMap.get(poNumber);
-        po.lineItems.push({
-          itemCode: row["Item Code"] || row.itemCode || "",
-          description: row.Description || row.description || "No description",
+        poLineMap[poNo].push({
+          itemCode: row["Item Code"] || row["Item_Code"] || row.itemCode || "-",
+
           category: row.Category || row.category || "Other",
-          amount: parseAmount(row["Total Amount"] || row.totalPrice || 0),
+
+          description:
+            row.Description ||
+            row.description ||
+            row["Item Description"] ||
+            "-",
+
+          amount: parseAmount(
+            row["Total Amount"] || row.totalPrice || row.total || 0,
+          ),
         });
       });
 
-      // Calculate total amount from line items (procurement_line)
-      poMap.forEach((poData, poNumber) => {
-        const totalFromLineItems = poData.lineItems.reduce(
-          (sum: number, item: any) => sum + item.amount,
-          0,
-        );
-        poData.totalAmount = totalFromLineItems;
+      // Step 3: Attach lineItems when building PO list
+      const poList = projectRows.map((row: any) => {
+        const poNumber =
+          row["PO Number"] || row["PO_Number"] || row["PO No"] || row.poNumber;
+
+        return {
+          poNumber: poNumber,
+          date: row.Date || row.date || row["DATE"],
+          projectCode: row.Project || row.project || projectCode,
+          totalAmount: parseAmount(
+            row["Net Amount"] || row["Total Amount"] || 0,
+          ),
+          description: row.Description || row.description || "No description",
+          category: row.Category || row.category || "Other",
+
+          lineItems: poLineMap[poNumber] || [],
+        };
       });
 
-      const poDetails = Array.from(poMap.values());
-      setSelectedMonthPOs(poDetails);
-      setModalSource("project"); // Set source to project
+      const sortedPOs = poList.sort((a, b) => {
+        const dateA = parseDateSafe(a.date);
+        const dateB = parseDateSafe(b.date);
+        return dateB - dateA;
+      });
+
+      setSelectedMonthPOs(sortedPOs);
+      setModalSource("project");
       setShowPOModal(true);
     } catch (error) {
       console.error("Error fetching project POs:", error);
@@ -3266,8 +3296,8 @@ export function CostInsights({
 
       {/* Category PO Details Modal */}
       {showCategoryModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-visible">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-visible">
             <div className="px-6 py-4 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">
@@ -3439,8 +3469,8 @@ export function CostInsights({
 
       {/* PO Details Modal */}
       {showPOModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-visible">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-visible">
             <div className="px-6 py-4 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">

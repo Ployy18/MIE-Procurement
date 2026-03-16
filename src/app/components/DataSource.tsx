@@ -175,6 +175,9 @@ export function DataSource() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [deleteFileConfirm, setDeleteFileConfirm] = useState<string | null>(
+    null,
+  );
 
   // Memoize filtered data to prevent unnecessary recalculation
   const filteredData = useMemo(
@@ -278,23 +281,8 @@ export function DataSource() {
         console.log("🔄 [DataSource] Delayed refresh after upload...");
 
         try {
-          // First refresh - get initial data
           await handleRefresh();
-          console.log("🔄 [DataSource] First refresh completed");
-
-          // Wait longer for backend to fully process
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          // Second refresh - ensure all data is updated
-          console.log("🔄 [DataSource] Second refresh after upload...");
-          await handleRefresh();
-          console.log("🔄 [DataSource] Second refresh completed");
-
-          // Final check after another delay
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          console.log("🔄 [DataSource] Final refresh check...");
-          await handleRefresh();
-          console.log("🔄 [DataSource] All refreshes completed");
+          console.log("🔄 [DataSource] Refresh completed");
         } catch (error) {
           console.error("❌ [DataSource] Error during upload refresh:", error);
         }
@@ -325,6 +313,7 @@ export function DataSource() {
     // Set up interval to check for new sheets every 30 seconds (more frequent)
     const interval = setInterval(async () => {
       try {
+        if (document.hidden) return;
         const updatedSheets = await getSheetNames();
         setAvailableSheets((prev) => {
           if (updatedSheets.length !== prev.length) {
@@ -641,23 +630,11 @@ export function DataSource() {
     }
   };
 
-  const handleDeleteFile = async (filename: string) => {
-    console.log("🗑️ [DEBUG] Starting file deletion for:", filename);
-
-    // Show confirmation dialog
-    const confirmed = window.confirm(
-      `ยืนยันการลบไฟล์ "${filename}" จะถูกลบออกจากระบบและ Google Sheets อย่างถาวร`,
-    );
-
-    if (!confirmed) {
-      console.log("🚫 [DEBUG] User cancelled deletion");
-      return;
-    }
-
+  const executeDeleteFile = async (filename: string) => {
     try {
       // Set syncing status
       setSyncStatus("syncing");
-      console.log("� [DEBUG] Deleting file from backend:", filename);
+      console.log("🔄 [DEBUG] Deleting file from backend:", filename);
 
       // Call the backend endpoint
       const result = await deleteFileData(filename);
@@ -701,6 +678,14 @@ export function DataSource() {
       alert("เกิดข้อผิดพลาดในการลบไฟล์ กรุณาลองใหม่");
       setSyncStatus("disconnected");
     }
+  };
+
+  const handleDeleteFile = (filename: string) => {
+    console.log("🗑️ [DEBUG] Starting file deletion for:", filename);
+
+    // Show confirmation dialog
+    setDeleteFileConfirm(filename);
+    return;
   };
 
   const fetchSheetData = async (sheetName: string) => {
@@ -1047,6 +1032,43 @@ export function DataSource() {
             </div>
           </ChartContainer>
         </>
+      )}
+
+      {/* Delete File Confirmation Modal */}
+      {deleteFileConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center space-x-3 text-red-600 mb-4">
+              <Trash size={24} />
+              <h2 className="text-xl font-bold">Delete File</h2>
+            </div>
+            <div className="text-gray-600 mb-6 space-y-1">
+              <p>ไฟล์ "{deleteFileConfirm}"</p>
+              <p>จะถูกลบออกจากระบบและ Google Sheets อย่างถาวร</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteFileConfirm(null)}
+                className="flex-1 px-4 py-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={async () => {
+                  if (!deleteFileConfirm) return;
+
+                  const filename = deleteFileConfirm;
+                  setDeleteFileConfirm(null);
+                  await executeDeleteFile(filename);
+                }}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

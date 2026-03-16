@@ -261,22 +261,24 @@ export function ProcurementOverview({
       );
       setUniquePOCount(uniquePOs.size);
 
-      const total = Object.values(categoryStats.categorySpend).reduce(
-        (sum: number, amount: number) => sum + amount,
+      const totalAmountHead = filteredHead.reduce(
+        (sum: number, row: any) =>
+          sum + (parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0),
         0,
       );
-      setTotalAmount(total);
+      setTotalAmount(totalAmountHead);
 
       setTotalServiceCosts(categoryStats.serviceTotal);
       setTotalMaterialCosts(categoryStats.materialTotal);
       setTotalOtherCosts(categoryStats.otherTotal);
 
-      // 5. Process monthly expense data from procurement_line
-      const monthlyExpenseMap = filteredLine.reduce(
+      // 5. Process monthly expense data from procurement_head
+      const monthlyExpenseMap = filteredHead.reduce(
         (acc: Record<string, number>, row: any) => {
           const monthYear = extractMonthYearFromDate(row.Date);
           if (monthYear) {
-            const amount = parseFloat(row["Total Amount"]) || 0;
+            const amount =
+              parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0;
             acc[monthYear] = (acc[monthYear] || 0) + amount;
           }
           return acc;
@@ -330,20 +332,14 @@ export function ProcurementOverview({
 
       setMonthlyExpenseData(sortedMonthlyData);
 
-      // 5. Process yearly expense data from procurement_line
-      const projectFilteredLine = lineRows.filter((row) => {
-        if (filters.project !== "all") {
-          return row.Project === filters.project;
-        }
-        return true;
-      });
-
-      const yearlyExpenseMap = projectFilteredLine.reduce(
+      // 5. Process yearly expense data from procurement_head
+      const yearlyExpenseMap = projectFilteredHead.reduce(
         (acc: Record<string, number>, row: any) => {
           const year = extractYearFromDate(row.Date);
 
           if (year) {
-            const amount = parseFloat(row["Total Amount"]) || 0;
+            const amount =
+              parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0;
             acc[year] = (acc[year] || 0) + amount;
           }
 
@@ -361,10 +357,11 @@ export function ProcurementOverview({
 
       setYearlyExpenseData(sortedYearlyData);
 
-      // 6. Supplier Data
-      const supplierMap = filteredLine.reduce((acc: any, row: any) => {
+      // 6. Supplier Data from procurement_head
+      const supplierMap = filteredHead.reduce((acc: any, row: any) => {
         const supplier = row.Supplier;
-        const amount = parseFloat(row["Total Amount"]) || 0;
+        const amount =
+          parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0;
         const poNumber = row["PO Number"];
 
         if (!acc[supplier]) {
@@ -541,7 +538,8 @@ export function ProcurementOverview({
             poNumber: poNo,
             date: row.Date,
             projectCode: row.Project,
-            totalAmount: parseFloat(row["Net Amount"]) || 0, // Use Net Amount from procurement_head
+            totalAmount:
+              parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0, // Use Net Amount from procurement_head
             lineItems: lineItemGroups[poNo] || [], // Get line items from grouped line data
           };
           return acc;
@@ -906,63 +904,65 @@ export function ProcurementOverview({
             delay={0.7}
             className="px-8 pt-6 pb-8"
           >
-            <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-              <table className="w-full text-left text-sm text-gray-600 table-fixed">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-16 text-center">
-                      No
-                    </th>
-                    <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-[300px] text-center">
-                      Supplier
-                    </th>
-                    <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-[180px] whitespace-nowrap text-center">
-                      Net Amount
-                    </th>
-                    <th className="px-4 py-2 font-medium text-gray-900 w-28 text-center">
-                      PO count
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {supplierData
-                    .slice(
-                      (currentPage - 1) * itemsPerPage,
-                      currentPage * itemsPerPage,
-                    )
-                    .map((supplier, index) => (
-                      <tr
-                        key={supplier.name}
-                        className="hover:bg-gray-50 transition-colors divide-x divide-gray-200"
-                      >
-                        <td className="px-4 py-1.5 text-gray-600 border-r border-gray-200 text-center">
-                          {(currentPage - 1) * itemsPerPage + index + 1}
-                        </td>
-                        <td
-                          className="px-4 py-1.5 text-gray-600 border-r border-gray-200 truncate"
-                          title={supplier.name}
+            <div className="border border-gray-200 rounded-lg bg-white">
+              <div className="overflow-x-auto">
+                <table className="min-w-[700px] w-full text-left text-sm text-gray-600 table-fixed">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-16 text-center">
+                        No
+                      </th>
+                      <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-[300px] text-center">
+                        Supplier
+                      </th>
+                      <th className="px-4 py-2 font-medium text-gray-900 border-r border-gray-200 w-[180px] whitespace-nowrap text-center">
+                        Net Amount
+                      </th>
+                      <th className="px-4 py-2 font-medium text-gray-900 w-28 text-center">
+                        PO count
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {supplierData
+                      .slice(
+                        (currentPage - 1) * itemsPerPage,
+                        currentPage * itemsPerPage,
+                      )
+                      .map((supplier, index) => (
+                        <tr
+                          key={supplier.name}
+                          className="hover:bg-gray-50 transition-colors divide-x divide-gray-200"
                         >
-                          {supplier.name}
-                        </td>
-                        <td className="px-4 py-1.5 text-gray-600 border-r border-gray-200 text-right">
-                          {supplier.totalAmount.toLocaleString("en-US", {
-                            minimumFractionDigits:
-                              supplier.totalAmount % 1 === 0 ? 0 : 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </td>
-                        <td className="px-4 py-1.5 text-center">
-                          <button
-                            onClick={() => handlePOCountClick(supplier.name)}
-                            className="px-2 py-1 text-gray-600 rounded-full text-xs font-medium hover:bg-[#cfd8dc] transition-colors cursor-pointer"
+                          <td className="px-4 py-1.5 text-gray-600 border-r border-gray-200 text-center">
+                            {(currentPage - 1) * itemsPerPage + index + 1}
+                          </td>
+                          <td
+                            className="px-4 py-1.5 text-gray-600 border-r border-gray-200 truncate"
+                            title={supplier.name}
                           >
-                            {supplier.poCount} POs
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+                            {supplier.name}
+                          </td>
+                          <td className="px-4 py-1.5 text-gray-600 border-r border-gray-200 text-right">
+                            {supplier.totalAmount.toLocaleString("en-US", {
+                              minimumFractionDigits:
+                                supplier.totalAmount % 1 === 0 ? 0 : 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="px-4 py-1.5 text-center">
+                            <button
+                              onClick={() => handlePOCountClick(supplier.name)}
+                              className="px-2 py-1 text-gray-600 rounded-full text-xs font-medium hover:bg-[#cfd8dc] transition-colors cursor-pointer"
+                            >
+                              {supplier.poCount} POs
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
 
               {/* Pagination */}
               {supplierData.length > itemsPerPage && (
@@ -970,7 +970,8 @@ export function ProcurementOverview({
                   <div className="text-sm text-gray-700">
                     Showing {(currentPage - 1) * itemsPerPage + 1} to{" "}
                     {Math.min(currentPage * itemsPerPage, supplierData.length)}{" "}
-                    of {supplierData.length} suppliers
+                    of {supplierData.length}{" "}
+                    {supplierData.length === 1 ? "supplier" : "suppliers"}
                   </div>
                   <div className="flex gap-1">
                     <button
@@ -1092,7 +1093,7 @@ export function ProcurementOverview({
 
           {/* PO Details Modal */}
           {showPOModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200">
               <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-visible">
                 <div className="px-6 py-4 border-b border-gray-200">
                   <div className="flex items-center justify-between">
