@@ -37,6 +37,9 @@ class AuthService {
       if (!response.ok) {
         const text = await response.text();
         console.error("❌ [AuthService] Login failed with status:", response.status, text);
+        if (response.status === 401) {
+          throw new Error("Invalid email or password. Please try again.");
+        }
         try {
           const errorData = JSON.parse(text);
           throw new Error(errorData.message || `Login failed: ${response.statusText}`);
