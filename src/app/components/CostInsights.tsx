@@ -1223,11 +1223,13 @@ export function CostInsights({
         totalSupplierSpend && totalSupplierSpend > 0
           ? (supplier.total / totalSupplierSpend) * 100
           : 0;
-      const barWidth = maxTotal > 0 ? (supplier.total / maxTotal) * 100 : 0;
+      const barWidth =
+        totalSupplierSpend > 0
+          ? (supplier.total / totalSupplierSpend) * 100
+          : 0;
 
       return {
         ...supplier,
-        total: totalSupplierSpend || 0,
         percentage,
         barWidth,
         formattedTotal: formatCurrency(supplier.total),
@@ -2447,7 +2449,7 @@ export function CostInsights({
             {activeTab === "supplier" && (
               <div className="space-y-6">
                 <ChartContainer
-                  title="Top Suppliers by Spending"
+                  title="Top 10 Suppliers by Spending"
                   subtitle="Supplier spending with cost category breakdown"
                   delay={0.1}
                   className="px-8 pt-6 pb-8"
@@ -2629,7 +2631,7 @@ export function CostInsights({
                                 className="h-full rounded-l-full transition-all duration-500"
                                 style={{
                                   backgroundColor: "#72d572",
-                                  width: `${(supplier.service / supplierBreakdownData.maxTotal) * 100}%`,
+                                  width: `${(supplier.service / supplierBreakdownData.totalSupplierSpend) * 100}%`,
                                 }}
                                 title={`Service: ${((supplier.service / supplier.total) * 100).toFixed(1)}% - ${formatCurrency(supplier.service)}`}
                               />
@@ -2640,7 +2642,7 @@ export function CostInsights({
                                 className="h-full transition-all duration-500"
                                 style={{
                                   backgroundColor: "#29b6f6",
-                                  width: `${(supplier.material / supplierBreakdownData.maxTotal) * 100}%`,
+                                  width: `${(supplier.material / supplierBreakdownData.totalSupplierSpend) * 100}%`,
                                 }}
                                 title={`Material: ${((supplier.material / supplier.total) * 100).toFixed(1)}% - ${formatCurrency(supplier.material)}`}
                               />
@@ -2651,7 +2653,7 @@ export function CostInsights({
                                 className="h-full rounded-r-full transition-all duration-500"
                                 style={{
                                   backgroundColor: "#90a4ae",
-                                  width: `${(supplier.other / supplierBreakdownData.maxTotal) * 100}%`,
+                                  width: `${(supplier.other / supplierBreakdownData.totalSupplierSpend) * 100}%`,
                                 }}
                                 title={`Other: ${((supplier.other / supplier.total) * 100).toFixed(1)}% - ${formatCurrency(supplier.other)}`}
                               />
