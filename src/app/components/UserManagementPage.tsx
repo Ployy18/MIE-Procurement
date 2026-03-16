@@ -348,7 +348,7 @@ export function UserManagementPage() {
                         <div className="flex justify-center gap-2">
                           <button
                             onClick={() => handleOpenModal(user)}
-                            disabled={user.email === "admin@email.com"}
+                            disabled={user.email === "admin@gmail.com"}
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition
 disabled:text-gray-300 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                           >
@@ -358,7 +358,7 @@ disabled:text-gray-300 disabled:cursor-not-allowed disabled:hover:bg-transparent
                           <button
                             onClick={() => setDeleteConfirm(user.id)}
                             disabled={
-                              user.email === "admin@email.com" ||
+                              user.email === "admin@gmail.com" ||
                               user.id === currentAuthUser?.id
                             }
                             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition

@@ -683,7 +683,7 @@ export function DataUpload({ onChangeView }: DataUploadProps) {
                     variant="outline"
                     className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50"
                   >
-                    <X className="w-4 h-4" />
+                    <X size={20} />
                     Close
                   </Button>
                   <Button

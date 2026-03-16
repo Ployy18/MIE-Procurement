@@ -841,7 +841,7 @@ export function DataSource() {
                   >
                     {isEditMode ? (
                       <>
-                        <X size={16} />
+                        <X size={20} />
                         Exit
                       </>
                     ) : (

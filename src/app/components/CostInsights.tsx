@@ -3483,7 +3483,7 @@ export function CostInsights({
                   onClick={closePOModal}
                   className="text-gray-400 hover:text-gray-600 transition-colors"
                 >
-                  <X className="w-6 h-6" />
+                  <X size={20} />
                 </button>
               </div>
             </div>
