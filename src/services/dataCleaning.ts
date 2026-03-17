@@ -1,6 +1,7 @@
 import { format, parse, isValid } from "date-fns";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
+import { detectSubcategory } from "./dataProcessingLayer";
 
 export interface RawDataRow {
   [key: string]: string | number | null | undefined;
@@ -734,9 +735,9 @@ export const DataCleaningService = {
 
     if (rawCategory) {
       category = rawCategory.toString();
-    } else if (itemCode) {
-      // Only categorize if it's a line item (has item code)
-      category = this.autoCategorize(itemCode);
+    } else if (description) {
+      // Use the new advanced subcategory detection logic
+      category = detectSubcategory(description);
     }
     // Header rows (no item code) will have empty category
 

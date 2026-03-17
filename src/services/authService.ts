@@ -11,20 +11,13 @@ class AuthService {
   private token: string | null = null;
 
   constructor() {
-    this.token = localStorage.getItem("token");
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      try {
-        this.user = JSON.parse(storedUser);
-      } catch (e) {
-        this.logout();
-      }
-    }
+    this.token = null;
+    this.user = null;
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
   }
 
   async login(email: string, password: string) {
-    console.log("🔐 [AuthService] Attempting login for:", email);
-
     try {
       const response = await fetch(`${API_BASE}/login`, {
         method: "POST",
@@ -34,46 +27,40 @@ class AuthService {
         body: JSON.stringify({ email, password }),
       });
 
+      const text = await response.text();
+      let errorData: any = null;
+
+      try {
+        errorData = JSON.parse(text);
+      } catch {}
+
       if (!response.ok) {
-        const text = await response.text();
-        console.error(
-          "❌ [AuthService] Login failed with status:",
-          response.status,
-          text,
-        );
-        let errorData: any = null;
-        try {
-          errorData = JSON.parse(text);
-        } catch (e) {
-          // ignore JSON parsing errors
-        }
         if (errorData?.message === "Account is suspended") {
-          throw new Error(
-            "Your account has been suspended. Please contact the administrator.",
-          );
+          throw new Error("Your account has been suspended.");
         }
+
         if (response.status === 401) {
-          throw new Error("Invalid email or password. Please try again.");
+          throw new Error("Invalid email or password.");
         }
-        throw new Error("Login failed. Please try again later.");
+
+        throw new Error("Login failed.");
       }
 
-      const data = await response.json();
+      const data = JSON.parse(text);
 
       if (!data.token) {
-        throw new Error("Invalid login response: Missing token");
+        throw new Error("Missing token");
       }
 
       this.token = data.token;
       this.user = data.user;
 
-      localStorage.setItem("token", this.token as string);
+      localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(this.user));
 
-      console.log("✅ [AuthService] Login successful");
       return data;
     } catch (error: any) {
-      console.error("❌ [AuthService] Login error:", error.message);
+      console.error("❌ Login error:", error.message);
       throw error;
     }
   }
@@ -83,7 +70,6 @@ class AuthService {
     this.user = null;
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    window.location.href = "/login";
   }
 
   getCurrentUser(): User | null {
@@ -102,12 +88,10 @@ class AuthService {
     return this.user?.role === "admin";
   }
 
-  // Validate token with local decode to check expiry
   async validateSession(): Promise<boolean> {
     if (!this.token) return false;
 
     try {
-      // Simple JWT decode without library
       const base64Url = this.token.split(".")[1];
       if (!base64Url) return false;
 
@@ -115,25 +99,32 @@ class AuthService {
       const jsonPayload = decodeURIComponent(
         atob(base64)
           .split("")
-          .map(function (c) {
-            return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
-          })
+          .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
           .join(""),
       );
 
       const payload = JSON.parse(jsonPayload);
 
-      // Check if expired
       if (payload.exp && Date.now() >= payload.exp * 1000) {
-        console.warn("⚠️ [AuthService] Token expired");
-        this.logout();
+        console.warn("⚠️ Token expired");
+
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        this.token = null;
+        this.user = null;
+
         return false;
       }
 
       return true;
     } catch (error) {
       console.error("Session validation error:", error);
-      this.logout();
+
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      this.token = null;
+      this.user = null;
+
       return false;
     }
   }
