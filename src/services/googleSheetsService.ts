@@ -5,7 +5,7 @@ import { API_BASE } from "../config/apiConfig";
 // Configuration for Node.js Backend
 // Use relative paths for better compatibility with Netlify redirects
 const BACKEND_CONFIG = {
-  BASE_URL: API_BASE, 
+  BASE_URL: API_BASE,
   TIMEOUT: 30000,
   RETRY_ATTEMPTS: 3,
 } as const;
@@ -15,7 +15,7 @@ const getAuthHeaders = () => {
   const token = authService.getToken();
   return {
     "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   } as HeadersInit;
 };
 
@@ -55,59 +55,6 @@ export interface SheetData {
 const dataCache = new Map<string, { data: SheetData; timestamp: number }>();
 
 /**
- * Standardized API call with retry logic and error handling
- */
-async function apiCall<T>(
-  url: string,
-  options: RequestInit = {},
-  retries: number = BACKEND_CONFIG.RETRY_ATTEMPTS
-): Promise<T> {
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...getAuthHeaders(),
-        ...options.headers,
-      },
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        authService.logout();
-        throw new Error("Session expired. Please login again.");
-      }
-      
-      let errorMessage = `Backend error: ${response.status} ${response.statusText}`;
-      try {
-        const errorData = await response.json();
-        errorMessage = errorData.message || errorData.error || errorMessage;
-      } catch (e) {
-        // Fallback to text if not JSON
-        const errorText = await response.text();
-        if (errorText) errorMessage += ` - ${errorText.substring(0, 100)}`;
-      }
-      throw new Error(errorMessage);
-    }
-
-    const result: BackendResponse = await response.json();
-    
-    if (result.success) {
-      return result.data as T;
-    } else {
-      throw new Error(result.error || result.message || "Unknown API error");
-    }
-  } catch (error) {
-    if (retries > 0 && !(error instanceof Error && error.message.includes("Session expired"))) {
-      console.warn(`⚠️ Retrying API call to ${url}. Attempts remaining: ${retries}`);
-      // Exponential backoff
-      await new Promise(resolve => setTimeout(resolve, (BACKEND_CONFIG.RETRY_ATTEMPTS - retries + 1) * 1000));
-      return apiCall<T>(url, options, retries - 1);
-    }
-    throw error;
-  }
-}
-
-/**
  * Upload data to Node.js backend
  */
 export async function uploadMultiTableData(
@@ -116,8 +63,9 @@ export async function uploadMultiTableData(
   tables?: any,
 ): Promise<UploadResult> {
   try {
-    const result = await apiCall<any>(`${BACKEND_CONFIG.BASE_URL}/upload`, {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/upload`, {
       method: "POST",
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         data: cleanedData,
         filename: filename,
@@ -126,16 +74,31 @@ export async function uploadMultiTableData(
       signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
     });
 
-    return {
-      success: true,
-      message: "Upload successful",
-      details: result,
-    };
+    if (!response.ok) {
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const result: BackendResponse = await response.json();
+
+    if (result.success) {
+      return {
+        success: true,
+        message: result.message,
+        details: result.data,
+      };
+    } else {
+      return {
+        success: false,
+        message: result.error || result.message,
+      };
+    }
   } catch (error) {
-    console.error("❌ [GoogleSheetsService] Upload failed:", error);
+    console.error("Error uploading to backend:", error);
     return {
       success: false,
-      message: error instanceof Error ? error.message : "Upload failed",
+      message: `Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`,
     };
   }
 }
@@ -161,32 +124,56 @@ export async function getSheetDataByName(
   }
 
   try {
-    const data = await apiCall<{ headers: string[]; rows: any[] }>(
+    const response = await fetch(
       `${BACKEND_CONFIG.BASE_URL}/sheets/${sheetName}`,
       {
         method: "GET",
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
-      }
+      },
     );
 
-    const sheetData: SheetData = {
-      headers: data.headers || [],
-      rows: data.rows || [],
-      data: data.rows || [],
-      metadata: {
-        rowCount: data.rows?.length || 0,
-        columnCount: data.headers?.length || 0,
-        sheetName: sheetName,
-      },
-    };
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch sheet: ${response.status} ${response.statusText}`,
+      );
+    }
 
-    // Cache the result
-    dataCache.set(cacheKey, { data: sheetData, timestamp: Date.now() });
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await response.text();
+      console.error("Non-JSON response received:", text.slice(0, 100));
+      throw new Error(
+        `Expected JSON response but received ${contentType || "unknown content"}. Please check if the backend server is running correctly at ${BACKEND_CONFIG.BASE_URL}`,
+      );
+    }
 
-    return sheetData;
+    const result: BackendResponse = await response.json();
+
+    if (result.success && result.data) {
+      const sheetData: SheetData = {
+        headers: result.data.headers || [],
+        rows: result.data.rows || [],
+        data: result.data.rows || [],
+        metadata: {
+          rowCount: result.data.rows?.length || 0,
+          columnCount: result.data.headers?.length || 0,
+          sheetName: sheetName,
+        },
+      };
+
+      // Cache the result
+      dataCache.set(cacheKey, { data: sheetData, timestamp: Date.now() });
+
+      return sheetData;
+    } else {
+      throw new Error(result.error || "Failed to fetch sheet data");
+    }
   } catch (error) {
-    console.error(`❌ [GoogleSheetsService] Failed to fetch sheet ${sheetName}:`, error);
-    throw error;
+    console.error("Error fetching sheet data:", error);
+    throw new Error(
+      `Failed to fetch sheet data: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
   }
 }
 
@@ -219,17 +206,31 @@ export async function getAllSheetData(): Promise<{
  */
 export async function getSheetNames(): Promise<string[]> {
   try {
-    const data = await apiCall<{ sheets: string[] }>(
-      `${BACKEND_CONFIG.BASE_URL}/sheets`,
-      {
-        method: "GET",
-        signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
-      }
-    );
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/sheets`, {
+      method: "GET",
+      headers: getAuthHeaders(),
+      signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
+    });
 
-    return data.sheets || [];
+    if (!response.ok) {
+      throw new Error(`Failed to fetch sheet names: ${response.status}`);
+    }
+
+    const result: BackendResponse = await response.json();
+
+    if (result.success && result.data) {
+      return result.data.sheets || [];
+    } else {
+      // Fallback to default sheet names if API fails but returns 200
+      return [
+        "procurement_data",
+        "suppliers_master",
+        "categories_master",
+        "upload_logs",
+      ];
+    }
   } catch (error) {
-    console.error("❌ [GoogleSheetsService] Error fetching sheet names:", error);
+    console.error("Error fetching sheet names:", error);
     // Fallback to default sheet names
     return [
       "procurement_data",
@@ -255,19 +256,60 @@ export async function updateSheetData(
   data: any[],
 ): Promise<any> {
   try {
-    const result = await apiCall<any>(`${BACKEND_CONFIG.BASE_URL}/update-sheet`, {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/update-sheet`, {
       method: "POST",
+      headers: getAuthHeaders(),
       body: JSON.stringify({ sheetName, data }),
       signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      // Try to parse as JSON, if fails use text
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    // Check if response is actually JSON before parsing
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
+
     // Clear cache for this sheet
     dataCache.delete(sheetName);
 
-    return result;
+    return result.data;
   } catch (error) {
-    console.error(`❌ [GoogleSheetsService] Error updating sheet ${sheetName}:`, error);
-    throw error;
+    console.error("Error updating sheet data:", error);
+    throw new Error(
+      `Error updating sheet data: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -276,13 +318,50 @@ export async function updateSheetData(
  */
 export async function deleteFileData(filename: string): Promise<any> {
   try {
-    const result = await apiCall<any>(
+    const response = await fetch(
       `${BACKEND_CONFIG.BASE_URL}/file/${encodeURIComponent(filename)}`,
       {
         method: "DELETE",
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
-      }
+      },
     );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
 
     // Clear cache for all affected sheets
     dataCache.delete("upload_logs");
@@ -290,10 +369,12 @@ export async function deleteFileData(filename: string): Promise<any> {
     dataCache.delete("procurement_head");
     dataCache.delete("procurement_line");
 
-    return result;
+    return result.data;
   } catch (error) {
-    console.error(`❌ [GoogleSheetsService] Error deleting file data for ${filename}:`, error);
-    throw error;
+    console.error("Error deleting file data:", error);
+    throw new Error(
+      `Error deleting file data: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -302,15 +383,54 @@ export async function deleteFileData(filename: string): Promise<any> {
  */
 export async function getBatchInformation(): Promise<any> {
   try {
-    const result = await apiCall<any>(`${BACKEND_CONFIG.BASE_URL}/batches`, {
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/batches`, {
       method: "GET",
+      headers: getAuthHeaders(),
       signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
     });
 
-    return result;
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
+
+    return result.data;
   } catch (error) {
-    console.error("❌ [GoogleSheetsService] Error fetching batch information:", error);
-    throw error;
+    console.error("Error fetching batch information:", error);
+    throw new Error(
+      `Error fetching batch information: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -319,13 +439,50 @@ export async function getBatchInformation(): Promise<any> {
  */
 export async function deleteBatchData(batchId: string): Promise<any> {
   try {
-    const result = await apiCall<any>(
+    const response = await fetch(
       `${BACKEND_CONFIG.BASE_URL}/batch/${encodeURIComponent(batchId)}`,
       {
         method: "DELETE",
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
-      }
+      },
     );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [DEBUG] Response status:", response.status);
+      console.error("❌ [DEBUG] Response text:", errorText);
+
+      let errorBody: { message?: string };
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+
+      throw new Error(
+        `Backend error: ${response.status} ${response.statusText} - ${errorBody.message}`,
+      );
+    }
+
+    const responseText = await response.text();
+    let result: BackendResponse;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(
+        "❌ [DEBUG] Failed to parse response as JSON:",
+        responseText,
+      );
+      throw new Error(
+        `Invalid JSON response from server: ${responseText.substring(0, 100)}...`,
+      );
+    }
+
+    if (!result.success) {
+      throw new Error(`Backend error: ${result.message}`);
+    }
 
     // Clear cache for all affected sheets
     dataCache.delete("upload_logs");
@@ -333,10 +490,12 @@ export async function deleteBatchData(batchId: string): Promise<any> {
     dataCache.delete("procurement_head");
     dataCache.delete("procurement_line");
 
-    return result;
+    return result.data;
   } catch (error) {
-    console.error(`❌ [GoogleSheetsService] Error deleting batch data for ${batchId}:`, error);
-    throw error;
+    console.error("Error deleting batch data:", error);
+    throw new Error(
+      `Error deleting batch data: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

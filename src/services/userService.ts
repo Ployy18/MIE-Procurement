@@ -68,19 +68,19 @@ class UserService {
 
   async deleteUser(id: string): Promise<void> {
     console.log("🗑️ [UserService] Deleting user ID:", id);
-    
+
     const response = await fetch(
       `${API_BASE}/deleteUser/${encodeURIComponent(id)}`,
       {
         method: "DELETE",
         headers: this.getHeaders(),
-      }
+      },
     );
 
     if (!response.ok) {
       const text = await response.text();
       let message = "Failed to delete user";
-      
+
       try {
         const data = JSON.parse(text);
         message = data.message || message;
@@ -92,7 +92,7 @@ class UserService {
       console.error("❌ [UserService] Delete failed:", message);
       throw new Error(message);
     }
-    
+
     console.log("✅ [UserService] User deleted successfully");
   }
 }
