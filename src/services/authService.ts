@@ -42,20 +42,21 @@ class AuthService {
 
       if (!response.ok) {
         if (errorData?.message === "Account is suspended") {
-          throw new Error("Your account has been suspended.");
+          throw new Error("Your account is suspended. Please contact support.");
         }
 
         if (response.status === 401) {
-          throw new Error("Invalid email or password.");
+          throw new Error("Invalid email or password. Please try again.");
         }
 
-        throw new Error("Login failed.");
+        throw new Error("Something went wrong. Please try again.");
       }
 
       const data = JSON.parse(text);
 
       if (!data.token) {
-        throw new Error("Missing token");
+        console.error("Missing token in response", data);
+        throw new Error("Something went wrong. Please try again.");
       }
 
       this.token = data.token;
