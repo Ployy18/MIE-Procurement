@@ -1,4 +1,11 @@
-import React, { useState, useMemo, useCallback, memo, useEffect } from "react";
+import React, {
+  useState,
+  useMemo,
+  useCallback,
+  memo,
+  useEffect,
+  useRef,
+} from "react";
 import { motion } from "framer-motion";
 import {
   LineChart,
@@ -10,10 +17,8 @@ import {
   ResponsiveContainer,
   Area,
 } from "recharts";
-import { Calendar, AlertCircle } from "lucide-react";
-import {
-  getTab1Data,
-} from "../../services/googleSheetsService";
+import { Calendar, AlertCircle, ChevronDown } from "lucide-react";
+import { getTab1Data } from "../../services/googleSheetsService";
 import { LoadingState } from "./ui/LoadingState";
 import {
   THAI_MONTHS,
@@ -33,8 +38,6 @@ type MonthlySpend = {
   actual: number | null;
   forecast: number | null;
 };
-
-
 
 interface ProjectBurnRateData {
   month: string;
@@ -212,8 +215,6 @@ function calculateSeasonalFactors(
 //
 // This would improve maintainability and make the main component more focused.
 // ============================================================================
-
-
 
 // ============================================================================
 // FORECAST UTILITIES
@@ -415,8 +416,6 @@ const forecastWeightedMovingAverage = (
 
   return forecasts;
 };
-
-
 
 interface SheetDataRow {
   Date?: string;
@@ -737,8 +736,8 @@ const calculateRMSE = (historicalData: MonthlySpend[]): number => {
 
   return errors.length > 0
     ? Math.sqrt(
-      errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
-    )
+        errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
+      )
     : 0;
 };
 
@@ -870,8 +869,8 @@ const generateMovingAverageForecast = (
   const rmse =
     errors.length > 0
       ? Math.sqrt(
-        errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
-      )
+          errors.reduce((sum, error) => sum + error * error, 0) / errors.length,
+        )
       : 0;
 
   // Use shared forecasting utility with full historical series (winsorized if applicable)
@@ -932,8 +931,6 @@ const generateMovingAverageForecast = (
   return forecastData;
 };
 
-
-
 const ChartContainer = memo(
   ({
     title,
@@ -992,8 +989,25 @@ const ForecastPlanning: React.FC = () => {
   const [selectedProjectBurnRate, setSelectedProjectBurnRate] =
     useState<string>("");
   const [budgetLimit, setBudgetLimit] = useState<string>("");
+  const [budgetByProject, setBudgetByProject] = useState<
+    Record<string, number>
+  >({});
   const [allHeadRows, setAllHeadRows] = useState<any[]>([]);
   const [allProjectsList, setAllProjectsList] = useState<string[]>([]);
+  const [activeDropdown, setActiveDropdown] = useState<"project" | null>(null);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("budgetByProject");
+      if (stored) {
+        setBudgetByProject(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load budgetByProject", e);
+    }
+  }, []);
 
   // Fetch data from Google Sheets on component mount
   useEffect(() => {
@@ -1010,9 +1024,9 @@ const ForecastPlanning: React.FC = () => {
             headData.rows.map((row) =>
               String(
                 row.Project ||
-                row.projectCode ||
-                row["Project Code"] ||
-                "Default Project",
+                  row.projectCode ||
+                  row["Project Code"] ||
+                  "Default Project",
               ),
             ),
           ),
@@ -1060,9 +1074,9 @@ const ForecastPlanning: React.FC = () => {
         const projectRows = allHeadRows.filter((row) => {
           const p = String(
             row.Project ||
-            row.projectCode ||
-            row["Project Code"] ||
-            "Default Project",
+              row.projectCode ||
+              row["Project Code"] ||
+              "Default Project",
           );
           return p === selectedProjectBurnRate;
         });
@@ -1079,6 +1093,50 @@ const ForecastPlanning: React.FC = () => {
 
     updateProjectData();
   }, [selectedProjectBurnRate, allHeadRows]);
+
+  // Click outside handler for dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!projectDropdownRef.current?.contains(event.target as Node)) {
+        setActiveDropdown(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Sync input when project changes
+  useEffect(() => {
+    if (!selectedProjectBurnRate) return;
+
+    const existing = budgetByProject[selectedProjectBurnRate];
+    if (existing !== undefined) {
+      setBudgetLimit(existing.toString());
+    } else {
+      setBudgetLimit("");
+    }
+  }, [selectedProjectBurnRate, budgetByProject]);
+
+  const handleSetBudget = () => {
+    if (!selectedProjectBurnRate) return;
+
+    const parsed = parseFloat(budgetLimit.replace(/,/g, ""));
+    if (isNaN(parsed)) return;
+
+    const updated = {
+      ...budgetByProject,
+      [selectedProjectBurnRate]: parsed,
+    };
+
+    setBudgetByProject(updated);
+
+    try {
+      localStorage.setItem("budgetByProject", JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to save budgetByProject", e);
+    }
+  };
 
   // Generate historical data options from real data
   const historicalDataOptions = useMemo(() => {
@@ -1097,7 +1155,6 @@ const ForecastPlanning: React.FC = () => {
 
   // Memoized category data and forecast
 
-
   const spendingData = useMemo(() => {
     const historical = historicalDataOptions[selectedPeriod];
     return [...historical, ...forecastData];
@@ -1113,19 +1170,17 @@ const ForecastPlanning: React.FC = () => {
   }, [allProjectsList]);
 
   const projectBurnRatePlotData = useMemo(() => {
-    // If manual budget limit is provided, override the calculated budget
-    if (budgetLimit && budgetLimit.trim() !== "") {
-      const manualBudget = parseFloat(budgetLimit.replace(/,/g, ""));
-      if (!isNaN(manualBudget)) {
-        return projectBurnRateData.map((item) => ({
-          ...item,
-          budget: manualBudget,
-        }));
-      }
+    const savedBudget = budgetByProject[selectedProjectBurnRate];
+
+    if (savedBudget !== undefined) {
+      return projectBurnRateData.map((item) => ({
+        ...item,
+        budget: savedBudget,
+      }));
     }
 
     return projectBurnRateData;
-  }, [projectBurnRateData, budgetLimit]);
+  }, [projectBurnRateData, budgetByProject, selectedProjectBurnRate]);
 
   // Memoized calculations for better performance
   const statistics = useMemo(() => {
@@ -1160,7 +1215,7 @@ const ForecastPlanning: React.FC = () => {
     const averageSpend =
       actualValues.length > 0
         ? actualValues.reduce((sum: number, val: number) => sum + val, 0) /
-        actualValues.length
+          actualValues.length
         : 0;
     const totalForecast = forecastData.reduce(
       (sum: number, d: any) => sum + d.forecast,
@@ -1176,14 +1231,14 @@ const ForecastPlanning: React.FC = () => {
     const mean =
       actualValues.length > 0
         ? actualValues.reduce((sum: number, val: number) => sum + val, 0) /
-        actualValues.length
+          actualValues.length
         : 0;
     const variance =
       actualValues.length > 0
         ? actualValues.reduce(
-          (sum: number, val: number) => sum + Math.pow(val - mean, 2),
-          0,
-        ) / actualValues.length
+            (sum: number, val: number) => sum + Math.pow(val - mean, 2),
+            0,
+          ) / actualValues.length
         : 0;
     const stdDev = Math.sqrt(variance);
     const coefficientOfVariation = mean > 0 ? stdDev / mean : 0;
@@ -1201,8 +1256,8 @@ const ForecastPlanning: React.FC = () => {
     const forecastGrowth =
       averageSpend > 0
         ? ((totalForecast / forecastData.length - averageSpend) /
-          averageSpend) *
-        100
+            averageSpend) *
+          100
         : 0;
 
     if (process.env.NODE_ENV === "development") {
@@ -1357,10 +1412,11 @@ const ForecastPlanning: React.FC = () => {
                   <button
                     key={period}
                     onClick={() => setSelectedPeriod(period as any)}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${selectedPeriod === period
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                      selectedPeriod === period
                         ? "bg-blue-600 text-white shadow-md transform scale-105"
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      }`}
+                    }`}
                   >
                     {period === "12months"
                       ? "Last 12 Months"
@@ -1448,10 +1504,10 @@ const ForecastPlanning: React.FC = () => {
                           return numValue === 0
                             ? "0k"
                             : `${(numValue / 1000).toLocaleString("en-US", {
-                              minimumFractionDigits:
-                                (numValue / 1000) % 1 === 0 ? 0 : 2,
-                              maximumFractionDigits: 2,
-                            })}k`;
+                                minimumFractionDigits:
+                                  (numValue / 1000) % 1 === 0 ? 0 : 2,
+                                maximumFractionDigits: 2,
+                              })}k`;
                         }}
                       />
                       <Tooltip
@@ -1598,30 +1654,71 @@ const ForecastPlanning: React.FC = () => {
                   <span className="text-sm font-medium text-gray-600">
                     Project :
                   </span>
-                  <select
-                    value={selectedProjectBurnRate}
-                    onChange={(e) => setSelectedProjectBurnRate(e.target.value)}
-                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                  >
-                    {projectsForSelect.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative" ref={projectDropdownRef}>
+                    <button
+                      onClick={() =>
+                        setActiveDropdown(
+                          activeDropdown === "project" ? null : "project",
+                        )
+                      }
+                      className="h-[38px] w-[100px] px-3 py-2 text-sm font-normal border border-gray-300 rounded-lg bg-white text-gray-900 flex items-center justify-between hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <span className="truncate">
+                        {selectedProjectBurnRate || "Select Project"}
+                      </span>
+
+                      <ChevronDown
+                        size={16}
+                        className={`text-gray-500 transition-transform ${
+                          activeDropdown === "project" ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {activeDropdown === "project" && (
+                      <div className="absolute top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                        <div className="p-1 max-h-64 overflow-y-auto">
+                          {projectsForSelect.map((p) => (
+                            <div
+                              key={p}
+                              onClick={() => {
+                                setSelectedProjectBurnRate(p);
+                                setActiveDropdown(null);
+                              }}
+                              className={`px-3 py-2 text-sm cursor-pointer rounded hover:bg-gray-50 ${
+                                selectedProjectBurnRate === p
+                                  ? "bg-blue-50 text-blue-600 font-medium"
+                                  : ""
+                              }`}
+                            >
+                              {p}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-600">
                     Budget Limit :
                   </span>
-                  <input
-                    type="text"
-                    value={budgetLimit}
-                    onChange={(e) => setBudgetLimit(e.target.value)}
-                    placeholder="Auto-calculate"
-                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all w-32"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={budgetLimit}
+                      onChange={(e) => setBudgetLimit(e.target.value)}
+                      placeholder="Auto-calculate"
+                      className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all w-32"
+                    />
+                    <button
+                      onClick={handleSetBudget}
+                      className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                    >
+                      SET
+                    </button>
+                  </div>
                 </div>
 
                 <ul
@@ -1721,10 +1818,10 @@ const ForecastPlanning: React.FC = () => {
                       return numValue === 0
                         ? "0k"
                         : `${(numValue / 1000).toLocaleString("en-US", {
-                          minimumFractionDigits:
-                            (numValue / 1000) % 1 === 0 ? 0 : 2,
-                          maximumFractionDigits: 2,
-                        })}k`;
+                            minimumFractionDigits:
+                              (numValue / 1000) % 1 === 0 ? 0 : 2,
+                            maximumFractionDigits: 2,
+                          })}k`;
                     }}
                   />
                   <XAxis
@@ -1854,8 +1951,8 @@ const ForecastPlanning: React.FC = () => {
                 const remainingMonths = Math.max(
                   0,
                   (projectEndDate.getFullYear() - currentDate.getFullYear()) *
-                  12 +
-                  (projectEndDate.getMonth() - currentDate.getMonth()),
+                    12 +
+                    (projectEndDate.getMonth() - currentDate.getMonth()),
                 );
 
                 const projectedSpend =
@@ -1864,7 +1961,7 @@ const ForecastPlanning: React.FC = () => {
                 return (
                   projectedSpend > (Number(currentData.budget) || 0) &&
                   (Number(currentData.cumulative_spend) || 0) <=
-                  (Number(currentData.budget) || 0)
+                    (Number(currentData.budget) || 0)
                 );
               })() && (
                 <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-xl flex items-center gap-3 text-orange-700">
@@ -1878,10 +1975,10 @@ const ForecastPlanning: React.FC = () => {
             {projectBurnRatePlotData.length > 0 &&
               projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
                 .cumulative_spend >
-              (Number(
-                projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
-                  .budget,
-              ) || 0) && (
+                (Number(
+                  projectBurnRatePlotData[projectBurnRatePlotData.length - 1]
+                    .budget,
+                ) || 0) && (
                 <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
                   <AlertCircle className="w-5 h-5 text-red-600 animate-pulse" />
                   <span className="text-sm font-semibold">

@@ -25,15 +25,8 @@ import {
   Loader2,
 } from "lucide-react";
 
-// React Icons
-import { MdMiscellaneousServices } from "react-icons/md";
-import { FaMoneyBill, FaWallet } from "react-icons/fa";
-
-// Box Icons
-import { BiSolidCctv } from "react-icons/bi";
-
 // Ion Icons
-import { IoMdDocument } from "react-icons/io";
+import { FileText, Wallet, Wrench, Settings, Cctv } from "lucide-react";
 
 // Components
 import { KPICard } from "./KPICard";
@@ -586,7 +579,7 @@ export function ProcurementOverview({
               value={loading ? "Loading..." : uniquePOCount.toString()}
               trend=""
               trendUp={true}
-              icon={IoMdDocument}
+              icon={FileText}
               iconSize={28}
               delay={0.1}
             />
@@ -602,7 +595,7 @@ export function ProcurementOverview({
               }
               trend=""
               trendUp={false}
-              icon={FaMoneyBill}
+              icon={Wallet}
               iconSize={28}
               delay={0.2}
             />
@@ -619,7 +612,7 @@ export function ProcurementOverview({
               }
               trend=""
               trendUp={true}
-              icon={MdMiscellaneousServices}
+              icon={Wrench}
               iconSize={28}
               delay={0.3}
             />
@@ -636,7 +629,7 @@ export function ProcurementOverview({
               }
               trend=""
               trendUp={true}
-              icon={BiSolidCctv}
+              icon={Cctv}
               iconSize={28}
               delay={0.4}
             />
@@ -652,7 +645,7 @@ export function ProcurementOverview({
               }
               trend=""
               trendUp={true}
-              icon={FaWallet}
+              icon={Settings}
               iconSize={20}
               delay={0.5}
             />

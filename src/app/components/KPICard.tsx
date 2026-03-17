@@ -43,8 +43,8 @@ export function KPICard({
             {value}
           </h3>
         </div>
-        <div className="p-3 rounded-lg bg-blue-50 text-blue-600 group-hover:text-blue-700 group-hover:bg-blue-100 transition-all">
-          <Icon size={iconSize} />
+        <div className="p-3 rounded-md bg-blue-50 text-blue-600 group-hover:text-blue-700 group-hover:bg-blue-100 transition-all">
+          <Icon size={24} />
         </div>
       </div>
 

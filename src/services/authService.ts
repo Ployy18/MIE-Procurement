@@ -11,10 +11,16 @@ class AuthService {
   private token: string | null = null;
 
   constructor() {
-    this.token = null;
-    this.user = null;
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    this.token = sessionStorage.getItem("token");
+
+    const storedUser = sessionStorage.getItem("user");
+    if (storedUser) {
+      try {
+        this.user = JSON.parse(storedUser);
+      } catch {
+        this.logout();
+      }
+    }
   }
 
   async login(email: string, password: string) {
@@ -55,8 +61,8 @@ class AuthService {
       this.token = data.token;
       this.user = data.user;
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(this.user));
+      sessionStorage.setItem("token", data.token);
+      sessionStorage.setItem("user", JSON.stringify(this.user));
 
       return data;
     } catch (error: any) {
@@ -68,8 +74,8 @@ class AuthService {
   logout() {
     this.token = null;
     this.user = null;
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("user");
   }
 
   getCurrentUser(): User | null {
@@ -108,8 +114,8 @@ class AuthService {
       if (payload.exp && Date.now() >= payload.exp * 1000) {
         console.warn("⚠️ Token expired");
 
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
+        sessionStorage.removeItem("token");
+        sessionStorage.removeItem("user");
         this.token = null;
         this.user = null;
 
@@ -120,8 +126,8 @@ class AuthService {
     } catch (error) {
       console.error("Session validation error:", error);
 
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+      sessionStorage.removeItem("token");
+      sessionStorage.removeItem("user");
       this.token = null;
       this.user = null;
 
