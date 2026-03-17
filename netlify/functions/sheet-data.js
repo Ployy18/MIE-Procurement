@@ -1,10 +1,11 @@
 import { sheets, SPREADSHEET_ID } from "./shared.js";
+import { authMiddleware } from "./utils/auth.js";
 
-export const handler = async (event, context) => {
+const handler = async (event, context) => {
   // CORS headers
   const headers = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "GET, OPTIONS"
   };
 
@@ -105,3 +106,6 @@ export const handler = async (event, context) => {
     };
   }
 };
+
+export const mainHandler = authMiddleware(handler);
+export { mainHandler as handler };

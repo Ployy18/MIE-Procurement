@@ -38,14 +38,56 @@ import {
   SheetData,
 } from "../../services/googleSheetsService";
 
+// Shared column width mapping for consistency across components
+const columnWidthMap: Record<string, string> = {
+  date: "w-[120px]",
+  "po number": "w-[130px]",
+  supplier: "w-[250px]",
+  description: "w-[350px]",
+  "item code": "w-[140px]",
+  category: "w-[120px]",
+  quantity: "w-[100px]",
+  unit: "w-[90px]",
+  "unit price": "w-[130px]",
+  "net amount": "w-[130px]",
+  vat: "w-[130px]",
+  "total amount": "w-[130px]",
+  "total price": "w-[130px]",
+  project: "w-[120px]",
+  "project code": "w-[120px]",
+  "source file": "w-[220px]",
+  "total records": "w-[140px]",
+};
+
 // Helper function to format numbers with commas
 const formatNumberWithCommas = (value: any) => {
   if (value === null || value === undefined || value === "") return "";
   const num =
     typeof value === "string" ? parseFloat(value.replace(/,/g, "")) : value;
   if (isNaN(num)) return value;
-  return num.toLocaleString("en-US");
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: value.toString().includes(".") ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 };
+
+// Safe decimal formatting helper - only formats if decimal point exists
+function formatDecimalIfExists(value: any) {
+  if (value === null || value === undefined || value === "") return value;
+
+  const stringValue = value.toString();
+
+  // Only format numbers that already contain a decimal point
+  if (!stringValue.includes(".")) return value;
+
+  const num = parseFloat(stringValue.replace(/,/g, ""));
+  if (isNaN(num)) return value;
+
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 // Helper function to get display name for sheet
 const getSheetDisplayName = (sheetName: string) => {
@@ -133,6 +175,9 @@ export function DataSource() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [deleteFileConfirm, setDeleteFileConfirm] = useState<string | null>(
+    null,
+  );
 
   // Memoize filtered data to prevent unnecessary recalculation
   const filteredData = useMemo(
@@ -236,23 +281,8 @@ export function DataSource() {
         console.log("🔄 [DataSource] Delayed refresh after upload...");
 
         try {
-          // First refresh - get initial data
           await handleRefresh();
-          console.log("🔄 [DataSource] First refresh completed");
-
-          // Wait longer for backend to fully process
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          // Second refresh - ensure all data is updated
-          console.log("🔄 [DataSource] Second refresh after upload...");
-          await handleRefresh();
-          console.log("🔄 [DataSource] Second refresh completed");
-
-          // Final check after another delay
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          console.log("🔄 [DataSource] Final refresh check...");
-          await handleRefresh();
-          console.log("🔄 [DataSource] All refreshes completed");
+          console.log("🔄 [DataSource] Refresh completed");
         } catch (error) {
           console.error("❌ [DataSource] Error during upload refresh:", error);
         }
@@ -283,6 +313,7 @@ export function DataSource() {
     // Set up interval to check for new sheets every 30 seconds (more frequent)
     const interval = setInterval(async () => {
       try {
+        if (document.hidden) return;
         const updatedSheets = await getSheetNames();
         setAvailableSheets((prev) => {
           if (updatedSheets.length !== prev.length) {
@@ -599,23 +630,11 @@ export function DataSource() {
     }
   };
 
-  const handleDeleteFile = async (filename: string) => {
-    console.log("🗑️ [DEBUG] Starting file deletion for:", filename);
-
-    // Show confirmation dialog
-    const confirmed = window.confirm(
-      `ยืนยันการลบไฟล์ "${filename}" จะถูกลบออกจากระบบและ Google Sheets อย่างถาวร`,
-    );
-
-    if (!confirmed) {
-      console.log("🚫 [DEBUG] User cancelled deletion");
-      return;
-    }
-
+  const executeDeleteFile = async (filename: string) => {
     try {
       // Set syncing status
       setSyncStatus("syncing");
-      console.log("� [DEBUG] Deleting file from backend:", filename);
+      console.log("🔄 [DEBUG] Deleting file from backend:", filename);
 
       // Call the backend endpoint
       const result = await deleteFileData(filename);
@@ -659,6 +678,14 @@ export function DataSource() {
       alert("เกิดข้อผิดพลาดในการลบไฟล์ กรุณาลองใหม่");
       setSyncStatus("disconnected");
     }
+  };
+
+  const handleDeleteFile = (filename: string) => {
+    console.log("🗑️ [DEBUG] Starting file deletion for:", filename);
+
+    // Show confirmation dialog
+    setDeleteFileConfirm(filename);
+    return;
   };
 
   const fetchSheetData = async (sheetName: string) => {
@@ -814,7 +841,7 @@ export function DataSource() {
                   >
                     {isEditMode ? (
                       <>
-                        <X size={16} />
+                        <X size={20} />
                         Exit
                       </>
                     ) : (
@@ -880,25 +907,21 @@ export function DataSource() {
               ) : filteredData.length > 0 ? (
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
                   <div className="overflow-x-auto overflow-y-auto max-h-96">
-                    <table className="w-full text-sm sticky top-0 bg-white">
+                    <table className="w-full text-sm table-fixed">
                       <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                         <tr>
                           {selectedTab === "upload_logs" && isEditMode && (
-                            <th className="px-4 py-3 font-medium text-gray-900 border-r border-gray-200 w-12">
+                            <th className="px-2 py-2 font-medium text-gray-900 border-r border-gray-200 w-8 text-center">
                               {/* No select all checkbox for single selection mode */}
                             </th>
                           )}
                           {Object.keys(filteredData[0]).map((header, index) => (
                             <th
                               key={index}
-                              className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 ${
-                                header.toLowerCase() === "item code"
-                                  ? "min-w-[80px] max-w-[120px]"
-                                  : header.toLowerCase() === "po number" ||
-                                      header.toLowerCase() === "source file"
-                                    ? "min-w-[120px] max-w-[180px]"
-                                    : "min-w-[120px] max-w-[200px]"
-                              } text-center`}
+                              className={`px-4 py-3 font-medium text-gray-900 border-r border-gray-200 last:border-r-0 text-center ${
+                                columnWidthMap[header.toLowerCase()] ||
+                                "w-[120px]"
+                              }`}
                             >
                               <span className="block truncate" title={header}>
                                 {header}
@@ -914,7 +937,7 @@ export function DataSource() {
                             className="hover:bg-gray-50 transition-colors cursor-default"
                           >
                             {selectedTab === "upload_logs" && isEditMode && (
-                              <td className="px-4 py-3 border-r border-gray-200">
+                              <td className="px-2 py-2 border-r border-gray-200 w-8 text-center">
                                 <input
                                   type="checkbox"
                                   checked={selectedRows.has(rowIndex)}
@@ -934,20 +957,7 @@ export function DataSource() {
                             {Object.values(row).map((value, colIndex) => (
                               <td
                                 key={colIndex}
-                                className={`px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 ${
-                                  Object.keys(filteredData[0])[
-                                    colIndex
-                                  ].toLowerCase() === "description"
-                                    ? "max-w-xs truncate"
-                                    : Object.keys(filteredData[0])[
-                                          colIndex
-                                        ].toLowerCase() === "po number" ||
-                                        Object.keys(filteredData[0])[
-                                          colIndex
-                                        ].toLowerCase() === "source file"
-                                      ? "max-w-[180px] truncate"
-                                      : "whitespace-nowrap"
-                                } ${
+                                className={`px-4 py-3 text-gray-600 border-r border-gray-200 last:border-r-0 truncate overflow-hidden whitespace-nowrap text-ellipsis ${
                                   [
                                     "category",
                                     "quantity",
@@ -963,37 +973,13 @@ export function DataSource() {
                                     ? "text-center"
                                     : ""
                                 }`}
+                                title={value?.toString() || ""}
                               >
                                 {(() => {
                                   const headerKey = Object.keys(
                                     filteredData[0],
                                   )[colIndex].toLowerCase();
                                   const stringValue = value?.toString() || "";
-
-                                  if (headerKey === "description") {
-                                    return (
-                                      <span title={stringValue}>
-                                        {stringValue.substring(0, 50) +
-                                          (stringValue.length > 50
-                                            ? "..."
-                                            : "")}
-                                      </span>
-                                    );
-                                  }
-
-                                  if (
-                                    headerKey === "po number" ||
-                                    headerKey === "source file"
-                                  ) {
-                                    return (
-                                      <span
-                                        title={stringValue}
-                                        className="block truncate"
-                                      >
-                                        {stringValue}
-                                      </span>
-                                    );
-                                  }
 
                                   if (headerKey === "category") {
                                     if (!stringValue || stringValue === "-")
@@ -1046,6 +1032,43 @@ export function DataSource() {
             </div>
           </ChartContainer>
         </>
+      )}
+
+      {/* Delete File Confirmation Modal */}
+      {deleteFileConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center space-x-3 text-red-600 mb-4">
+              <Trash size={24} />
+              <h2 className="text-xl font-bold">Delete File</h2>
+            </div>
+            <div className="text-gray-600 mb-6 space-y-1">
+              <p>ไฟล์ "{deleteFileConfirm}"</p>
+              <p>จะถูกลบออกจากระบบและ Google Sheets อย่างถาวร</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteFileConfirm(null)}
+                className="flex-1 px-4 py-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={async () => {
+                  if (!deleteFileConfirm) return;
+
+                  const filename = deleteFileConfirm;
+                  setDeleteFileConfirm(null);
+                  await executeDeleteFile(filename);
+                }}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

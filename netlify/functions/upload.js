@@ -1,10 +1,23 @@
 import { DataCleaningService, appendTableToSheet } from "./shared.js";
+import { authMiddleware } from "./utils/auth.js";
 
-export const handler = async (event, context) => {
+const handler = async (event, context) => {
+  // Only admin allowed to upload
+  if (event.user.role !== "admin") {
+    return {
+      statusCode: 403,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+      body: JSON.stringify({ message: "Forbidden: Admin access required" }),
+    };
+  }
+
   // CORS headers
   const headers = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "POST, OPTIONS"
   };
 
@@ -204,3 +217,6 @@ export const handler = async (event, context) => {
     };
   }
 };
+
+export const mainHandler = authMiddleware(handler);
+export { mainHandler as handler };
