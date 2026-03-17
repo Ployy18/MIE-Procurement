@@ -1,7 +1,6 @@
 import { format, parse, isValid } from "date-fns";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
-import { detectSubcategory } from "./dataProcessingLayer";
 
 export interface RawDataRow {
   [key: string]: string | number | null | undefined;
@@ -735,9 +734,9 @@ export const DataCleaningService = {
 
     if (rawCategory) {
       category = rawCategory.toString();
-    } else if (description) {
-      // Use the new advanced subcategory detection logic
-      category = detectSubcategory(description);
+    } else if (itemCode) {
+      // Only categorize if it's a line item (has item code)
+      category = this.autoCategorize(itemCode);
     }
     // Header rows (no item code) will have empty category
 
@@ -814,7 +813,7 @@ export const DataCleaningService = {
       try {
         const parsed = parse(dateStr, f, new Date());
         if (isValid(parsed)) return format(parsed, "yyyy-MM-dd");
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // Native Date fallback
