@@ -15,7 +15,7 @@ const getAuthHeaders = () => {
   const token = authService.getToken();
   return {
     "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   } as HeadersInit;
 };
 
@@ -256,15 +256,12 @@ export async function updateSheetData(
   data: any[],
 ): Promise<any> {
   try {
-    const response = await fetch(
-      `${BACKEND_CONFIG.BASE_URL}/update-sheet`,
-      {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ sheetName, data }),
-        signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
-      },
-    );
+    const response = await fetch(`${BACKEND_CONFIG.BASE_URL}/update-sheet`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ sheetName, data }),
+      signal: AbortSignal.timeout(BACKEND_CONFIG.TIMEOUT),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -536,10 +533,10 @@ export async function getSheetNamesDynamic(): Promise<string[]> {
 }
 
 // Minimal no-ops for legacy code that might still call these
-export async function initializeSheetConfigs(): Promise<void> { }
-export async function updateSheetConfigsFromDatabase(): Promise<void> { }
-export function addNewSheet(_name: string): void { }
-export function updateSheetNames(_names: string[]): void { }
+export async function initializeSheetConfigs(): Promise<void> {}
+export async function updateSheetConfigsFromDatabase(): Promise<void> {}
+export function addNewSheet(_name: string): void {}
+export function updateSheetNames(_names: string[]): void {}
 export async function addSheetURL(
   _sheetName: string,
   _gid: string,
