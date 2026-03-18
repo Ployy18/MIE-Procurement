@@ -15,6 +15,7 @@ import {
 
 // Chart Utils
 import { shouldShowYearLabel } from "../../utils/chartAxisUtils";
+import { parseNumber, parseDateSafe } from "@/utils/dataParser";
 
 // Lucide Icons
 import {
@@ -46,85 +47,6 @@ export function ProcurementOverview({
   filters: { year: string; project: string; months?: string[] };
 }) {
   // Utility functions
-  const extractMonthFromDate = (
-    dateStr: string | undefined | null,
-  ): number | null => {
-    if (!dateStr) return null;
-
-    let month: number;
-    if (dateStr.includes("/")) {
-      // Format: DD/MM/YYYY or DD/MM/YY
-      const parts = dateStr.split("/");
-      month = parseInt(parts[1]);
-    } else if (dateStr.includes("-")) {
-      // Format: YYYY-MM-DD
-      const parts = dateStr.split("-");
-      month = parseInt(parts[1]);
-    } else {
-      return null;
-    }
-
-    return isNaN(month) ? null : month;
-  };
-
-  const extractYearFromDate = (
-    dateStr: string | undefined | null,
-  ): number | null => {
-    if (!dateStr) return null;
-
-    let year: number;
-    if (dateStr.includes("/")) {
-      // Format: DD/MM/YYYY or DD/MM/YY
-      const parts = dateStr.split("/");
-      year = parseInt(parts[2]);
-    } else if (dateStr.includes("-")) {
-      // Format: YYYY-MM-DD
-      const parts = dateStr.split("-");
-      year = parseInt(parts[0]);
-    } else {
-      return null;
-    }
-
-    return isNaN(year) ? null : year;
-  };
-
-  const extractMonthYearFromDate = (
-    dateStr: string | undefined | null,
-  ): string | null => {
-    if (!dateStr) return null;
-
-    let year: number, month: number;
-    if (dateStr.includes("/")) {
-      // Format: DD/MM/YYYY or DD/MM/YY
-      const parts = dateStr.split("/");
-      year = parseInt(parts[2]);
-      month = parseInt(parts[1]);
-    } else if (dateStr.includes("-")) {
-      // Format: YYYY-MM-DD
-      const parts = dateStr.split("-");
-      year = parseInt(parts[0]);
-      month = parseInt(parts[1]);
-    } else {
-      return null;
-    }
-
-    if (isNaN(year) || isNaN(month)) return null;
-
-    return `${year}-${month < 10 ? "0" : ""}${month}`;
-  };
-
-  const parseDate = (dateStr: string) => {
-    if (!dateStr) return 0;
-
-    if (dateStr.includes("/")) {
-      const [day, month, year] = dateStr.split("/");
-      const y = Number(year) > 2400 ? Number(year) - 543 : Number(year);
-
-      return new Date(y, Number(month) - 1, Number(day)).getTime();
-    }
-
-    return new Date(dateStr).getTime();
-  };
 
   // Main data fetching function
   const fetchPOData = async () => {
@@ -144,7 +66,8 @@ export function ProcurementOverview({
         return rows.filter((row) => {
           // Year filter
           if (filters.year !== "all") {
-            const year = extractYearFromDate(row.Date);
+            const date = parseDateSafe(row.Date);
+            const year = date ? date.getFullYear() : null;
             if (year === null || year.toString() !== filters.year) {
               return false;
             }
@@ -159,7 +82,8 @@ export function ProcurementOverview({
 
           // Month filter
           if (filters.months && filters.months.length > 0) {
-            const month = extractMonthFromDate(row.Date);
+            const date = parseDateSafe(row.Date);
+            const month = date ? date.getMonth() + 1 : null;
             if (month === null || !filters.months.includes(month.toString())) {
               return false;
             }
@@ -174,7 +98,8 @@ export function ProcurementOverview({
         return rows.filter((row) => {
           // Year filter
           if (filters.year !== "all") {
-            const year = extractYearFromDate(row.Date);
+            const date = parseDateSafe(row.Date);
+            const year = date ? date.getFullYear() : null;
             if (year === null || year.toString() !== filters.year) {
               return false;
             }
@@ -189,7 +114,8 @@ export function ProcurementOverview({
 
           // Month filter
           if (filters.months && filters.months.length > 0) {
-            const month = extractMonthFromDate(row.Date);
+            const date = parseDateSafe(row.Date);
+            const month = date ? date.getMonth() + 1 : null;
             if (month === null || !filters.months.includes(month.toString())) {
               return false;
             }
@@ -223,7 +149,7 @@ export function ProcurementOverview({
           row: any,
         ) => {
           const category = row.Category || "Other";
-          const amount = parseFloat(row["Total Amount"]) || 0;
+          const amount = parseNumber(row["Total Amount"]);
 
           // Update category totals
           if (category === "Service") {
@@ -256,7 +182,7 @@ export function ProcurementOverview({
 
       const totalAmountHead = filteredHead.reduce(
         (sum: number, row: any) =>
-          sum + (parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0),
+          sum + parseNumber(row["Net Amount"]),
         0,
       );
       setTotalAmount(totalAmountHead);
@@ -268,10 +194,12 @@ export function ProcurementOverview({
       // 5. Process monthly expense data from procurement_head
       const monthlyExpenseMap = filteredHead.reduce(
         (acc: Record<string, number>, row: any) => {
-          const monthYear = extractMonthYearFromDate(row.Date);
-          if (monthYear) {
-            const amount =
-              parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0;
+          const date = parseDateSafe(row.Date);
+          if (date) {
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1;
+            const monthYear = `${year}-${month < 10 ? "0" : ""}${month}`;
+            const amount = parseNumber(row["Net Amount"]);
             acc[monthYear] = (acc[monthYear] || 0) + amount;
           }
           return acc;
@@ -328,11 +256,11 @@ export function ProcurementOverview({
       // 5. Process yearly expense data from procurement_head
       const yearlyExpenseMap = projectFilteredHead.reduce(
         (acc: Record<string, number>, row: any) => {
-          const year = extractYearFromDate(row.Date);
+          const date = parseDateSafe(row.Date);
+          const year = date ? date.getFullYear() : null;
 
           if (year) {
-            const amount =
-              parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0;
+            const amount = parseNumber(row["Net Amount"]);
             acc[year] = (acc[year] || 0) + amount;
           }
 
@@ -353,8 +281,7 @@ export function ProcurementOverview({
       // 6. Supplier Data from procurement_head
       const supplierMap = filteredHead.reduce((acc: any, row: any) => {
         const supplier = row.Supplier;
-        const amount =
-          parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0;
+        const amount = parseNumber(row["Net Amount"]);
         const poNumber = row["PO Number"];
 
         if (!acc[supplier]) {
@@ -465,7 +392,8 @@ export function ProcurementOverview({
       // Apply year/project/month filters if active for head data
       if (filters.year !== "all") {
         supplierHeadRows = supplierHeadRows.filter((row: any) => {
-          const year = extractYearFromDate(row.Date);
+          const date = parseDateSafe(row.Date);
+          const year = date ? date.getFullYear() : null;
           return year !== null && year.toString() === filters.year;
         });
       }
@@ -476,7 +404,8 @@ export function ProcurementOverview({
       }
       if (filters.months && filters.months.length > 0) {
         supplierHeadRows = supplierHeadRows.filter((row: any) => {
-          const month = extractMonthFromDate(row.Date);
+          const date = parseDateSafe(row.Date);
+          const month = date ? date.getMonth() + 1 : null;
           return month !== null && filters.months!.includes(month.toString());
         });
       }
@@ -489,7 +418,8 @@ export function ProcurementOverview({
       // Apply year/project/month filters if active for line data
       if (filters.year !== "all") {
         supplierLineRows = supplierLineRows.filter((row: any) => {
-          const year = extractYearFromDate(row.Date);
+          const date = parseDateSafe(row.Date);
+          const year = date ? date.getFullYear() : null;
           return year !== null && year.toString() === filters.year;
         });
       }
@@ -500,7 +430,8 @@ export function ProcurementOverview({
       }
       if (filters.months && filters.months.length > 0) {
         supplierLineRows = supplierLineRows.filter((row: any) => {
-          const month = extractMonthFromDate(row.Date);
+          const date = parseDateSafe(row.Date);
+          const month = date ? date.getMonth() + 1 : null;
           return month !== null && filters.months!.includes(month.toString());
         });
       }
@@ -514,8 +445,8 @@ export function ProcurementOverview({
           }
           acc[poNo].push({
             category: row.Category,
-            unitPrice: parseFloat(row["Unit Price"]) || 0,
-            amount: parseFloat(row["Total Amount"]) || 0,
+            unitPrice: parseNumber(row["Unit Price"]),
+            amount: parseNumber(row["Total Amount"]),
             description: row.Description,
           });
           return acc;
@@ -531,8 +462,7 @@ export function ProcurementOverview({
             poNumber: poNo,
             date: row.Date,
             projectCode: row.Project,
-            totalAmount:
-              parseFloat(String(row["Net Amount"]).replace(/,/g, "")) || 0, // Use Net Amount from procurement_head
+            totalAmount: parseNumber(row["Net Amount"]), // Use Net Amount from procurement_head
             lineItems: lineItemGroups[poNo] || [], // Get line items from grouped line data
           };
           return acc;
@@ -541,7 +471,11 @@ export function ProcurementOverview({
       );
 
       const sortedPOs = Object.values(poGroups).sort(
-        (a: any, b: any) => parseDate(b.date) - parseDate(a.date),
+        (a: any, b: any) => {
+          const dateA = parseDateSafe(a.date);
+          const dateB = parseDateSafe(b.date);
+          return (dateB?.getTime() || 0) - (dateA?.getTime() || 0);
+        },
       );
 
       setSelectedSupplierPOs(sortedPOs);

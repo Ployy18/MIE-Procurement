@@ -10,6 +10,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { getSheetDataByName } from "../../services/googleSheetsService";
+import { parseDateSafe } from "@/utils/dataParser";
 
 const THAI_MONTHS = [
   { value: "1", label: "มกราคม" },
@@ -95,8 +96,9 @@ export function Header({
     if (selectedYear !== "all") {
       filteredRows = filteredRows.filter((row) => {
         const dateStr = row.Date || row.date || row["DATE"];
-        if (dateStr) {
-          let year = new Date(dateStr).getFullYear();
+        const date = parseDateSafe(dateStr);
+        if (date) {
+          let year = date.getFullYear();
           if (year < 2400) year += 543;
           return year.toString() === selectedYear;
         }
@@ -108,8 +110,9 @@ export function Header({
     if (selectedMonths.length > 0) {
       filteredRows = filteredRows.filter((row) => {
         const dateStr = row.Date || row.date || row["DATE"];
-        if (dateStr) {
-          const month = (new Date(dateStr).getMonth() + 1).toString();
+        const date = parseDateSafe(dateStr);
+        if (date) {
+          const month = (date.getMonth() + 1).toString();
           return selectedMonths.includes(month);
         }
         return false;
@@ -131,8 +134,9 @@ export function Header({
       filteredRows
         .map((row) => {
           const dateStr = row.Date || row.date || row["DATE"];
-          if (dateStr) {
-            let year = new Date(dateStr).getFullYear();
+          const date = parseDateSafe(dateStr);
+          if (date) {
+            let year = date.getFullYear();
             if (year < 2400) year += 543;
             return year.toString();
           }
@@ -147,8 +151,9 @@ export function Header({
       filteredRows
         .map((row) => {
           const dateStr = row.Date || row.date || row["DATE"];
-          if (dateStr) {
-            return (new Date(dateStr).getMonth() + 1).toString();
+          const date = parseDateSafe(dateStr);
+          if (date) {
+            return (date.getMonth() + 1).toString();
           }
           return null;
         })
@@ -257,8 +262,9 @@ export function Header({
     if (selectedYear !== "all") {
       filteredRows = filteredRows.filter((row) => {
         const dateStr = row.Date || row.date || row["DATE"];
-        if (dateStr) {
-          let year = new Date(dateStr).getFullYear();
+        const date = parseDateSafe(dateStr);
+        if (date) {
+          let year = date.getFullYear();
           if (year < 2400) year += 543;
           return year.toString() === selectedYear;
         }
@@ -271,8 +277,9 @@ export function Header({
       filteredRows
         .map((row) => {
           const dateStr = row.Date || row.date || row["DATE"];
-          if (dateStr) {
-            return (new Date(dateStr).getMonth() + 1).toString();
+          const date = parseDateSafe(dateStr);
+          if (date) {
+            return (date.getMonth() + 1).toString();
           }
           return null;
         })
