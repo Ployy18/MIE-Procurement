@@ -17,7 +17,11 @@
     "jsxImportSource": "react",
     "types": ["vite/client", "node"],
     "downlevelIteration": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
